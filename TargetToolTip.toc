@@ -1,8 +1,9 @@
 ## Interface: 110002
 ## Title: Target ToolTip
-## Notes: Enhances unit tooltips by displaying targeting information. Shows what a unit is currently targeting, and reveals which party/raid members are targeting them. Features color-coded names by class and faction for quick recognition.
+## Notes: Enhances unit tooltips by displaying targeting information. Shows what a unit is currently targeting, and reveals which party/raid members are targeting them. Features color-coded names by class and faction for quick recognition. Also removes realm names from party and raid frames.
 ## Author: Conor Timmis
-## Version: 1.0.0
+## Version: 1.1.0
+## SavedVariables: TargetToolTip
 
 TargetToolTip.lua
 
