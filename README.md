@@ -1,12 +1,20 @@
 # Target ToolTip
 
-A World of Warcraft addon that enhances unit tooltips with targeting information. Built over one week (**15.11.25 - 22.11.25**) as a learning project to understand how addons work. After years of playing WoW, I figured "why not" create my own. Learning Lua while building something for a game I play so much made the process much more engaging. I've also aimed to keep it lightweight and performant as far as I could understand at this point in time.
+A World of Warcraft addon that enhances unit tooltips with targeting information. Initially built over one week as a learning project to understand how addons work. After years of playing WoW, I figured "why not" create my own. Learning Lua while building something for a game I play so much made the process much more engaging. I've also aimed to keep it lightweight and performant as far as I could understand at this point in time.
 
 ## Features
+
+### Tooltip Enhancement
 
 - Shows what a unit is currently targeting
 - Displays which party/raid members are targeting them
 - Color-coded names by class and faction for quick recognition
+
+### Realm Name Removal
+
+- Automatically removes realm names from party frames
+- Automatically removes realm names from raid frames
+- Keeps your UI clean when playing with cross-realm players, without removing realm on tooltips.
 
 ## Installation
 
@@ -16,12 +24,19 @@ A World of Warcraft addon that enhances unit tooltips with targeting information
 
 ## Usage
 
-Simply hover over any unit to see the enhanced tooltip with targeting information. No configuration needed.
-
-## Author
-
-Conor Timmis
+Simply hover over any unit to see the enhanced tooltip with targeting information. No configuration needed - realm name removal is automatically enabled.
 
 ## Version
 
-1.0.0
+1.1.0
+
+## Changelog
+
+### 1.1.0 (23.11.2025)
+
+- Added realm name removal for party and raid frames
+- Merged functionality from RemoveRealmNames addon
+
+### 1.0.0 (22.11.2025)
+
+- Initial release with tooltip targeting information
