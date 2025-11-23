@@ -1,13 +1,16 @@
--- TargetToolTip: Show targeting information in unit tooltips
-
+-- TargetToolTip
 local addonName, addon = ...
 
 -- ========================================
--- CONFIGURATION
+-- CONSTANTS
 -- ========================================
-local CONFIG = {
+local CONSTANTS = {
     CACHE_TIMEOUT = 0.75,
     CACHE_CLEANUP_INTERVAL = 5,
+    MAX_PARTY_MEMBERS = 4,
+    MAX_RAID_MEMBERS = 40,
+    MAX_NAMEPLATES = 40,
+    
     COLORS = {
         LABEL = "|cffff6600",
         ME = "|cff00ff00",
@@ -15,59 +18,132 @@ local CONFIG = {
         NEUTRAL = "|cffffff00",
         HOSTILE = "|cffff0000",
         DEFAULT = "|cffffffff"
+    },
+    
+    REALM_FRAME_PATTERNS = {
+        "^PartyMemberFrame%d",
+        "^CompactRaidFrame%d",
+        "^CompactRaidGroup%dMember%d",
+        "^CompactPartyFrameMember%d"
     }
 }
 
--- Default settings for realm name removal
 local DEFAULTS = {
+    enableTooltips = true,
     hideRealmRaid = true,
     hideRealmParty = true,
 }
 
 -- ========================================
--- CACHE SYSTEM
+-- SETTINGS MODULE
 -- ========================================
-local Cache = {
-    data = {},
+local Settings = {}
+
+function Settings:Initialize()
+    TargetToolTip = TargetToolTip or {}
     
-    Get = function(self, guid)
-        local cached = self.data[guid]
-        if not cached then return nil end
-        
-        if GetTime() - cached.timestamp > CONFIG.CACHE_TIMEOUT then
-            self.data[guid] = nil
-            return nil
-        end
-        
-        return cached.data
-    end,
-    
-    Set = function(self, guid, data)
-        self.data[guid] = {
-            data = data,
-            timestamp = GetTime()
-        }
-    end,
-    
-    Clean = function(self)
-        local currentTime = GetTime()
-        for guid, cached in pairs(self.data) do
-            if currentTime - cached.timestamp > CONFIG.CACHE_TIMEOUT then
-                self.data[guid] = nil
-            end
+    -- Merge defaults with saved settings
+    for key, value in pairs(DEFAULTS) do
+        if TargetToolTip[key] == nil then
+            TargetToolTip[key] = value
         end
     end
-}
+    
+    return TargetToolTip
+end
+
+function Settings:Get(key)
+    return TargetToolTip and TargetToolTip[key]
+end
+
+function Settings:Set(key, value)
+    if TargetToolTip then
+        TargetToolTip[key] = value
+    end
+end
+
+-- ========================================
+-- CACHE MODULE
+-- ========================================
+local Cache = {}
+Cache.data = {}
+
+function Cache:Get(guid)
+    local cached = self.data[guid]
+    if not cached then return nil end
+    
+    if GetTime() - cached.timestamp > CONSTANTS.CACHE_TIMEOUT then
+        self.data[guid] = nil
+        return nil
+    end
+    
+    return cached.data
+end
+
+function Cache:Set(guid, data)
+    self.data[guid] = {
+        data = data,
+        timestamp = GetTime()
+    }
+end
+
+function Cache:Clean()
+    local currentTime = GetTime()
+    for guid, cached in pairs(self.data) do
+        if currentTime - cached.timestamp > CONSTANTS.CACHE_TIMEOUT then
+            self.data[guid] = nil
+        end
+    end
+end
+
+function Cache:StartCleanupTimer()
+    local frame = CreateFrame("Frame")
+    frame:SetScript("OnUpdate", function(self, elapsed)
+        self.timeSinceLastCleanup = (self.timeSinceLastCleanup or 0) + elapsed
+        
+        if self.timeSinceLastCleanup >= CONSTANTS.CACHE_CLEANUP_INTERVAL then
+            Cache:Clean()
+            self.timeSinceLastCleanup = 0
+        end
+    end)
+end
 
 -- ========================================
 -- UTILITY FUNCTIONS
 -- ========================================
-local function StripRealm(name)
+local Utils = {}
+
+function Utils.StripRealm(name)
     if not name then return "" end
     return name:match("^([^-]+)") or name
 end
 
-local function FindUnitByGUID(guid)
+function Utils.GetUnitColor(unit)
+    if UnitIsPlayer(unit) then
+        local _, class = UnitClass(unit)
+        if class then
+            local classColor = RAID_CLASS_COLORS[class]
+            if classColor then
+                return string.format("|cff%02x%02x%02x", 
+                    classColor.r * 255, 
+                    classColor.g * 255, 
+                    classColor.b * 255)
+            end
+        end
+    else
+        local reaction = UnitReaction(unit, "player")
+        if reaction then
+            if reaction >= 5 then return CONSTANTS.COLORS.FRIENDLY
+            elseif reaction == 4 then return CONSTANTS.COLORS.NEUTRAL
+            else return CONSTANTS.COLORS.HOSTILE
+            end
+        end
+    end
+    
+    return CONSTANTS.COLORS.DEFAULT
+end
+
+function Utils.FindUnitByGUID(guid)
     -- Check common units first (most likely)
     local commonUnits = {"mouseover", "target", "focus"}
     for _, unitToken in ipairs(commonUnits) do
@@ -78,7 +154,7 @@ local function FindUnitByGUID(guid)
     
     -- Check party members
     if IsInGroup() then
-        for i = 1, 4 do
+        for i = 1, CONSTANTS.MAX_PARTY_MEMBERS do
             local partyUnit = "party" .. i
             if UnitGUID(partyUnit) == guid then
                 return partyUnit
@@ -88,7 +164,7 @@ local function FindUnitByGUID(guid)
     
     -- Check raid members
     if IsInRaid() then
-        for i = 1, 40 do
+        for i = 1, CONSTANTS.MAX_RAID_MEMBERS do
             local raidUnit = "raid" .. i
             if UnitGUID(raidUnit) == guid then
                 return raidUnit
@@ -97,7 +173,7 @@ local function FindUnitByGUID(guid)
     end
     
     -- Check nameplates
-    for i = 1, 40 do
+    for i = 1, CONSTANTS.MAX_NAMEPLATES do
         local nameplateUnit = "nameplate" .. i
         if UnitGUID(nameplateUnit) == guid then
             return nameplateUnit
@@ -107,43 +183,35 @@ local function FindUnitByGUID(guid)
     return nil
 end
 
-local function GetUnitColor(unit)
-    if UnitIsPlayer(unit) then
-        local _, class = UnitClass(unit)
-        if class then
-            local classColor = RAID_CLASS_COLORS[class]
-            if classColor then
-                return string.format("|cff%02x%02x%02x", classColor.r * 255, classColor.g * 255, classColor.b * 255)
-            end
-        end
-    else
-        local reaction = UnitReaction(unit, "player")
-        if reaction then
-            if reaction >= 5 then return CONFIG.COLORS.FRIENDLY
-            elseif reaction == 4 then return CONFIG.COLORS.NEUTRAL
-            else return CONFIG.COLORS.HOSTILE
-            end
+function Utils.MatchesFramePattern(frameName)
+    if not frameName then return false end
+    
+    for _, pattern in ipairs(CONSTANTS.REALM_FRAME_PATTERNS) do
+        if frameName:match(pattern) then
+            return true
         end
     end
     
-    return CONFIG.COLORS.DEFAULT
+    return false
 end
 
 -- ========================================
--- TARGETING SCAN FUNCTIONS
+-- TARGETING SCANNER MODULE
 -- ========================================
-local function IsUnitTargeting(scanUnit, targetUnit)
+local TargetingScanner = {}
+
+function TargetingScanner.IsUnitTargeting(scanUnit, targetUnit)
     if not UnitExists(scanUnit) then return false end
     
     local scanTarget = scanUnit .. "target"
     return UnitExists(scanTarget) and UnitIsUnit(scanTarget, targetUnit)
 end
 
-local function AddTargeter(scanUnit, targeters, checkDuplicates)
+function TargetingScanner.AddTargeter(scanUnit, targeters, checkDuplicates)
     local name = UnitName(scanUnit)
     if not name then return end
     
-    name = StripRealm(name)
+    name = Utils.StripRealm(name)
     
     -- Check for duplicates if requested
     if checkDuplicates then
@@ -155,73 +223,75 @@ local function AddTargeter(scanUnit, targeters, checkDuplicates)
     table.insert(targeters, {unit = scanUnit, name = name})
 end
 
-local function ScanForTargeters(prefix, count, targetUnit, targeters, checkDuplicates)
+function TargetingScanner.ScanUnits(prefix, count, targetUnit, targeters, checkDuplicates)
     for i = 1, count do
         local scanUnit = prefix .. i
-        if IsUnitTargeting(scanUnit, targetUnit) then
-            AddTargeter(scanUnit, targeters, checkDuplicates)
+        if TargetingScanner.IsUnitTargeting(scanUnit, targetUnit) then
+            TargetingScanner.AddTargeter(scanUnit, targeters, checkDuplicates)
         end
     end
 end
 
-local function GetUnitsTargetingUnit(targetUnit)
+function TargetingScanner.GetUnitsTargeting(targetUnit)
     local targeters = {}
     
     -- Check party (only if not in raid to avoid duplicates)
     if IsInGroup() and not IsInRaid() then
-        ScanForTargeters("party", 4, targetUnit, targeters, false)
+        TargetingScanner.ScanUnits("party", CONSTANTS.MAX_PARTY_MEMBERS, targetUnit, targeters, false)
     end
     
     -- Check raid
     if IsInRaid() then
-        ScanForTargeters("raid", 40, targetUnit, targeters, false)
+        TargetingScanner.ScanUnits("raid", CONSTANTS.MAX_RAID_MEMBERS, targetUnit, targeters, false)
     end
     
     -- Check nameplates (skip in raids for performance)
     if not IsInRaid() then
-        ScanForTargeters("nameplate", 40, targetUnit, targeters, true)
+        TargetingScanner.ScanUnits("nameplate", CONSTANTS.MAX_NAMEPLATES, targetUnit, targeters, true)
     end
     
     return targeters
 end
 
 -- ========================================
--- TOOLTIP RENDERING
+-- TOOLTIP RENDERER MODULE
 -- ========================================
-local function RenderTargetLine(tooltip, targetUnit)
+local TooltipRenderer = {}
+
+function TooltipRenderer.RenderTargetLine(targetUnit)
     if UnitIsUnit(targetUnit, "player") then
-        return CONFIG.COLORS.LABEL .. "Target: |r" .. CONFIG.COLORS.ME .. "Me|r"
+        return CONSTANTS.COLORS.LABEL .. "Target: |r" .. CONSTANTS.COLORS.ME .. "Me|r"
     end
     
     local targetName = UnitName(targetUnit)
     if not targetName then return "" end
     
-    targetName = StripRealm(targetName)
-    local color = GetUnitColor(targetUnit)
+    targetName = Utils.StripRealm(targetName)
+    local color = Utils.GetUnitColor(targetUnit)
     
-    return CONFIG.COLORS.LABEL .. "Target: |r" .. color .. targetName .. "|r"
+    return CONSTANTS.COLORS.LABEL .. "Target: |r" .. color .. targetName .. "|r"
 end
 
-local function RenderTargetersList(tooltip, targeters)
+function TooltipRenderer.RenderTargetersList(targeters)
     local lines = {}
     
     -- Header
     if #targeters == 1 then
-        table.insert(lines, CONFIG.COLORS.LABEL .. "Targeted by:|r")
+        table.insert(lines, CONSTANTS.COLORS.LABEL .. "Targeted by:|r")
     else
-        table.insert(lines, CONFIG.COLORS.LABEL .. "Targeted by " .. #targeters .. " units:|r")
+        table.insert(lines, CONSTANTS.COLORS.LABEL .. "Targeted by " .. #targeters .. " units:|r")
     end
     
     -- Targeters
     for _, targeter in ipairs(targeters) do
-        local color = GetUnitColor(targeter.unit)
-        table.insert(lines, {text = "  " .. color .. targeter.name .. "|r", coloredName = color .. targeter.name})
+        local color = Utils.GetUnitColor(targeter.unit)
+        table.insert(lines, "  " .. color .. targeter.name .. "|r")
     end
     
     return lines
 end
 
-local function ApplyTooltipData(tooltip, targetText, targeterLines)
+function TooltipRenderer.ApplyTooltip(tooltip, targetText, targeterLines)
     if targetText and targetText ~= "" then
         tooltip:AddLine(targetText)
     end
@@ -229,11 +299,7 @@ local function ApplyTooltipData(tooltip, targetText, targeterLines)
     if targeterLines and #targeterLines > 0 then
         tooltip:AddLine(" ")
         for _, line in ipairs(targeterLines) do
-            if type(line) == "string" then
-                tooltip:AddLine(line)
-            else
-                tooltip:AddLine(line.text)
-            end
+            tooltip:AddLine(line)
         end
     end
     
@@ -241,20 +307,23 @@ local function ApplyTooltipData(tooltip, targetText, targeterLines)
 end
 
 -- ========================================
--- MAIN TOOLTIP HANDLER
+-- TOOLTIP HANDLER MODULE
 -- ========================================
-local function AddTargetInfoToTooltip(tooltip, data)
+local TooltipHandler = {}
+
+function TooltipHandler.AddTargetInfo(tooltip, data)
     if not data or not data.guid then return end
+    if not Settings:Get("enableTooltips") then return end
     
     -- Try cache first
     local cached = Cache:Get(data.guid)
     if cached then
-        ApplyTooltipData(tooltip, cached.targetText, cached.targeterLines)
+        TooltipRenderer.ApplyTooltip(tooltip, cached.targetText, cached.targeterLines)
         return
     end
     
     -- Find unit
-    local unit = FindUnitByGUID(data.guid)
+    local unit = Utils.FindUnitByGUID(data.guid)
     if not unit or not UnitExists(unit) then return end
     
     -- Build tooltip data
@@ -264,13 +333,13 @@ local function AddTargetInfoToTooltip(tooltip, data)
     -- Who is this unit targeting?
     local targetUnit = unit .. "target"
     if UnitExists(targetUnit) then
-        targetText = RenderTargetLine(tooltip, targetUnit)
+        targetText = TooltipRenderer.RenderTargetLine(targetUnit)
     end
     
     -- Who is targeting this unit?
-    local targeters = GetUnitsTargetingUnit(unit)
+    local targeters = TargetingScanner.GetUnitsTargeting(unit)
     if #targeters > 0 then
-        targeterLines = RenderTargetersList(tooltip, targeters)
+        targeterLines = TooltipRenderer.RenderTargetersList(targeters)
     end
     
     -- Cache for future
@@ -279,88 +348,169 @@ local function AddTargetInfoToTooltip(tooltip, data)
         targeterLines = targeterLines
     })
     
-    ApplyTooltipData(tooltip, targetText, targeterLines)
+    TooltipRenderer.ApplyTooltip(tooltip, targetText, targeterLines)
+end
+
+function TooltipHandler.Initialize()
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip, data)
+        if tooltip == GameTooltip then
+            TooltipHandler.AddTargetInfo(tooltip, data)
+        end
+    end)
 end
 
 -- ========================================
--- INITIALIZATION
+-- REALM NAME REMOVAL MODULE
 -- ========================================
--- Register tooltip processor
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip, data)
-    if tooltip == GameTooltip then
-        AddTargetInfoToTooltip(tooltip, data)
-    end
-end)
+local RealmNameRemoval = {}
 
--- Periodic cache cleanup
-local cleanupFrame = CreateFrame("Frame")
-cleanupFrame:SetScript("OnUpdate", function(self, elapsed)
-    self.timeSinceLastCleanup = (self.timeSinceLastCleanup or 0) + elapsed
+function RealmNameRemoval.StripRealmFromFrame(frame)
+    if not frame or frame:IsForbidden() then return end
+    if not frame.unit or not frame.name then return end
+    if not UnitIsPlayer(frame.unit) then return end
     
-    if self.timeSinceLastCleanup >= CONFIG.CACHE_CLEANUP_INTERVAL then
-        Cache:Clean()
-        self.timeSinceLastCleanup = 0
+    local unitName = GetUnitName(frame.unit, true)
+    if unitName then
+        frame.name:SetText(unitName:match("[^-]+"))
     end
-end)
+end
 
--- ========================================
--- REALM NAME REMOVAL (Party & Raid Frames)
--- ========================================
-local realmFrame = CreateFrame("Frame")
-
-local function InitializeRealmNameRemoval()
-    -- Load settings
-    TargetToolTipDB = TargetToolTipDB or CopyTable(DEFAULTS)
-    local db = TargetToolTipDB
+function RealmNameRemoval.InitializeRaidFrames()
+    if not Settings:Get("hideRealmRaid") then return end
     
-    -- Hide realm names on raid frames (includes party member frames shown in raid-style)
-    if db.hideRealmRaid then
-        hooksecurefunc("CompactUnitFrame_UpdateName", function(frame)
-            if frame and not frame:IsForbidden() then
-                local frameName = frame:GetName()
-                if frameName and (frameName:match("^PartyMemberFrame%d") or frameName:match("^CompactRaidFrame%d") or frameName:match("^CompactRaidGroup%dMember%d") or frameName:match("^CompactPartyFrameMember%d")) and frame.unit and frame.name then
-                    if UnitIsPlayer(frame.unit) then
-                        local unitName = GetUnitName(frame.unit, true)
-                        if unitName then
-                            frame.name:SetText(unitName:match("[^-]+"))
-                        end
+    hooksecurefunc("CompactUnitFrame_UpdateName", function(frame)
+        if Utils.MatchesFramePattern(frame:GetName()) then
+            RealmNameRemoval.StripRealmFromFrame(frame)
+        end
+    end)
+end
+
+function RealmNameRemoval.InitializePartyFrames()
+    if not Settings:Get("hideRealmParty") then return end
+    
+    if WOW_PROJECT_ID == WOW_PROJECT_MAINLINE then
+        hooksecurefunc("UnitFrame_Update", function()
+            for frame in PartyFrame.PartyMemberFramePool:EnumerateActive() do
+                local unitName = GetUnitName(frame.unit, true)
+                if unitName then
+                    frame.name:SetText(unitName:match("[^-]+"))
+                end
+            end
+        end)
+    elseif WOW_PROJECT_ID == WOW_PROJECT_CLASSIC or WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC then
+        hooksecurefunc("UnitFrame_Update", function(frame)
+            if frame and not frame:IsForbidden() and frame:GetName() then
+                if frame:GetName():match("^PartyMemberFrame%d") and frame.unit and frame.name then
+                    local unitName = GetUnitName(frame.unit, true)
+                    if unitName then
+                        frame.name:SetText(unitName:match("[^-]+"))
                     end
                 end
             end
         end)
     end
+end
+
+function RealmNameRemoval.Initialize()
+    RealmNameRemoval.InitializeRaidFrames()
+    RealmNameRemoval.InitializePartyFrames()
+end
+
+-- ========================================
+-- OPTIONS PANEL MODULE
+-- ========================================
+local OptionsPanel = {}
+
+function OptionsPanel.CreateFontString(parent, font, justify, anchor, relativeTo, relativeAnchor, x, y, text)
+    local fs = parent:CreateFontString(nil, 'ARTWORK', font)
+    fs:SetJustifyH(justify)
+    fs:SetPoint(anchor, relativeTo, relativeAnchor, x, y)
+    fs:SetText(text)
+    return fs
+end
+
+function OptionsPanel.CreateCheckbox(parent, anchor, relativeTo, x, y, label, settingKey)
+    local checkbox = CreateFrame("CheckButton", nil, parent, "InterfaceOptionsCheckButtonTemplate")
+    checkbox:SetPoint(anchor, relativeTo, x, y)
+    checkbox.Text:SetText(label)
+    checkbox:SetScript("OnClick", function(self)
+        Settings:Set(settingKey, self:GetChecked() and true or false)
+    end)
+    checkbox:SetChecked(Settings:Get(settingKey))
+    return checkbox
+end
+
+function OptionsPanel.CreateReloadButton(parent, anchor, relativeTo, x, y)
+    local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    button:SetPoint(anchor, relativeTo, x, y)
+    button:SetText("Reload UI")
+    button:SetWidth(120)
+    button:SetScript("OnClick", ReloadUI)
+    return button
+end
+
+function OptionsPanel.Initialize()
+    local panel = CreateFrame("Frame", "TargetToolTipOptionsPanel", UIParent)
+    panel.name = "Target ToolTip"
     
-    -- Hide realm names on party frames
-    if db.hideRealmParty then
-        if WOW_PROJECT_ID == WOW_PROJECT_MAINLINE then
-            hooksecurefunc("UnitFrame_Update", function(frame)
-                for activeFrame in PartyFrame.PartyMemberFramePool:EnumerateActive() do
-                    local unitName = GetUnitName(activeFrame.unit, true)
-                    if unitName then
-                        activeFrame.name:SetText(unitName:match("[^-]+"))
-                    end
-                end
-            end)
-        elseif WOW_PROJECT_ID == WOW_PROJECT_CLASSIC or WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC then
-            hooksecurefunc("UnitFrame_Update", function(frame)
-                if frame and not frame:IsForbidden() then
-                    local frameName = frame:GetName()
-                    if frameName and frameName:match("^PartyMemberFrame%d") and frame.unit and frame.name then
-                        local unitName = GetUnitName(frame.unit, true)
-                        if unitName then
-                            frame.name:SetText(unitName:match("[^-]+"))
-                        end
-                    end
-                end
-            end)
-        end
+    -- Title and description
+    local title = OptionsPanel.CreateFontString(panel, 'GameFontNormalHuge', 'LEFT', 'TOPLEFT', panel, 'TOPLEFT', 16, -16, panel.name)
+    local subtitle = OptionsPanel.CreateFontString(panel, 'GameFontNormal', 'LEFT', 'TOPLEFT', title, 'BOTTOMLEFT', 0, -8, 'Configure which features are enabled.')
+    local reloadNote = OptionsPanel.CreateFontString(panel, 'GameFontHighlight', 'LEFT', 'TOPLEFT', subtitle, 'BOTTOMLEFT', 0, -4, 'Note: Changes require a UI reload (/reload) to take effect.')
+    
+    -- Tooltip Features Section
+    local tooltipHeader = OptionsPanel.CreateFontString(panel, 'GameFontNormalLarge', 'LEFT', 'TOPLEFT', reloadNote, 'BOTTOMLEFT', 0, -30, 'Tooltip Features')
+    local cbTooltips = OptionsPanel.CreateCheckbox(panel, "TOPLEFT", tooltipHeader, 0, -20, "Show targeting information in tooltips", "enableTooltips")
+    
+    -- Realm Name Removal Section
+    local realmHeader = OptionsPanel.CreateFontString(panel, 'GameFontNormalLarge', 'LEFT', 'TOPLEFT', cbTooltips, 'BOTTOMLEFT', 0, -30, 'Realm Name Removal')
+    local cbRealmRaid = OptionsPanel.CreateCheckbox(panel, "TOPLEFT", realmHeader, 0, -20, "Remove realm names from raid frames", "hideRealmRaid")
+    local cbRealmParty = OptionsPanel.CreateCheckbox(panel, "TOPLEFT", cbRealmRaid, 0, -25, "Remove realm names from party frames", "hideRealmParty")
+    
+    -- Reload Button
+    OptionsPanel.CreateReloadButton(panel, "TOPLEFT", cbRealmParty, 0, -40)
+    
+    -- Register the panel
+    local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
+    Settings.RegisterAddOnCategory(category)
+    
+    return category:GetID()
+end
+
+-- ========================================
+-- SLASH COMMANDS
+-- ========================================
+local categoryID
+
+local function OpenOptionsPanel()
+    if categoryID then
+        _G.Settings.OpenToCategory(categoryID)
+    else
+        print("Target ToolTip: Options panel not available.")
     end
 end
 
-realmFrame:RegisterEvent("ADDON_LOADED")
-realmFrame:SetScript("OnEvent", function(self, event, loadedAddonName)
+SlashCmdList.TARGETTOOLTIP = OpenOptionsPanel
+SLASH_TARGETTOOLTIP1 = "/tt"
+SLASH_TARGETTOOLTIP2 = "/targettooltip"
+
+-- ========================================
+-- ADDON INITIALIZATION
+-- ========================================
+local function Initialize()
+    Settings:Initialize()
+    TooltipHandler.Initialize()
+    RealmNameRemoval.Initialize()
+    Cache:StartCleanupTimer()
+    categoryID = OptionsPanel.Initialize()
+end
+
+-- Register addon loaded event
+local initFrame = CreateFrame("Frame")
+initFrame:RegisterEvent("ADDON_LOADED")
+initFrame:SetScript("OnEvent", function(self, event, loadedAddonName)
     if loadedAddonName == addonName then
-        InitializeRealmNameRemoval()
+        Initialize()
         self:UnregisterEvent("ADDON_LOADED")
     end
 end)

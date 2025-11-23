@@ -1,8 +1,8 @@
 ## Interface: 110002
-## Title: Target ToolTip
+## Title: TargetToolTip
 ## Notes: Shows targeting info in tooltips and removes realm names from party/raid frames.
 ## Author: Conor Timmis
-## Version: 1.1.0
+## Version: 1.2
 ## SavedVariables: TargetToolTip
 
 TargetToolTip.lua
