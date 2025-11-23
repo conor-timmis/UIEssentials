@@ -24,13 +24,37 @@ A World of Warcraft addon that enhances unit tooltips with targeting information
 
 ## Usage
 
-Simply hover over any unit to see the enhanced tooltip with targeting information. No configuration needed - realm name removal is automatically enabled.
+Simply hover over any unit to see the enhanced tooltip with targeting information. All features are enabled by default.
+
+### Configuration
+
+Access the options panel to toggle features on/off:
+
+- Type `/tt` or `/targettooltip` in chat
+- Or navigate to **ESC → Interface → AddOns → Target ToolTip**
+
+Available options:
+
+- **Show targeting information in tooltips** - Display who is targeting what
+- **Remove realm names from raid frames** - Clean up raid frame names
+- **Remove realm names from party frames** - Clean up party frame names
+
+Changes require a UI reload (`/reload`) to take effect.
 
 ## Version
 
-1.1.0
+1.2.0
 
 ## Changelog
+
+### 1.2.0 (23.11.2025)
+
+- Added options panel with toggleable features
+- Added slash commands: `/tt` and `/targettooltip`
+- Features can now be enabled/disabled independently
+- Code refactored for better maintainability and organization
+- Improved module structure with clear separation of concerns
+- Better constants management and reduced code duplication
 
 ### 1.1.0 (23.11.2025)
 
