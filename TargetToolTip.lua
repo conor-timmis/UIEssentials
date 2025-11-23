@@ -32,14 +32,15 @@ local DEFAULTS = {
     enableTooltips = true,
     hideRealmRaid = true,
     hideRealmParty = true,
+    showItemLevelDecimals = true,
 }
 
 -- ========================================
 -- SETTINGS MODULE
 -- ========================================
-local Settings = {}
+local SettingsManager = {}
 
-function Settings:Initialize()
+function SettingsManager:Initialize()
     TargetToolTip = TargetToolTip or {}
     
     -- Merge defaults with saved settings
@@ -52,11 +53,11 @@ function Settings:Initialize()
     return TargetToolTip
 end
 
-function Settings:Get(key)
+function SettingsManager:Get(key)
     return TargetToolTip and TargetToolTip[key]
 end
 
-function Settings:Set(key, value)
+function SettingsManager:Set(key, value)
     if TargetToolTip then
         TargetToolTip[key] = value
     end
@@ -313,7 +314,7 @@ local TooltipHandler = {}
 
 function TooltipHandler.AddTargetInfo(tooltip, data)
     if not data or not data.guid then return end
-    if not Settings:Get("enableTooltips") then return end
+    if not SettingsManager:Get("enableTooltips") then return end
     
     -- Try cache first
     local cached = Cache:Get(data.guid)
@@ -376,7 +377,7 @@ function RealmNameRemoval.StripRealmFromFrame(frame)
 end
 
 function RealmNameRemoval.InitializeRaidFrames()
-    if not Settings:Get("hideRealmRaid") then return end
+    if not SettingsManager:Get("hideRealmRaid") then return end
     
     hooksecurefunc("CompactUnitFrame_UpdateName", function(frame)
         if Utils.MatchesFramePattern(frame:GetName()) then
@@ -386,7 +387,7 @@ function RealmNameRemoval.InitializeRaidFrames()
 end
 
 function RealmNameRemoval.InitializePartyFrames()
-    if not Settings:Get("hideRealmParty") then return end
+    if not SettingsManager:Get("hideRealmParty") then return end
     
     if WOW_PROJECT_ID == WOW_PROJECT_MAINLINE then
         hooksecurefunc("UnitFrame_Update", function()
@@ -423,6 +424,24 @@ local ItemLevelDecimal = {}
 ItemLevelDecimal.isHooked = false
 ItemLevelDecimal.isUpdating = false
 
+function ItemLevelDecimal.UpdateDisplay()
+    -- Force update the item level display
+    if CharacterStatsPane and CharacterStatsPane.ItemLevelFrame and CharacterStatsPane.ItemLevelFrame.Value then
+        local itemLevelText = CharacterStatsPane.ItemLevelFrame.Value
+        local _, avgItemLevelEquipped = GetAverageItemLevel()
+        
+        if avgItemLevelEquipped and avgItemLevelEquipped > 0 then
+            ItemLevelDecimal.isUpdating = true
+            if SettingsManager:Get("showItemLevelDecimals") then
+                itemLevelText:SetText(string.format("%.2f", avgItemLevelEquipped))
+            else
+                itemLevelText:SetText(math.floor(avgItemLevelEquipped))
+            end
+            ItemLevelDecimal.isUpdating = false
+        end
+    end
+end
+
 function ItemLevelDecimal.SetupHook()
     -- Only hook once
     if ItemLevelDecimal.isHooked then return true end
@@ -436,6 +455,9 @@ function ItemLevelDecimal.SetupHook()
     
     -- Hook SetText to automatically add decimals to item level display
     hooksecurefunc(itemLevelText, "SetText", function(self, text)
+        -- Check if feature is enabled
+        if not SettingsManager:Get("showItemLevelDecimals") then return end
+        
         -- Prevent infinite recursion
         if ItemLevelDecimal.isUpdating then return end
         
@@ -464,13 +486,25 @@ function ItemLevelDecimal.TrySetupHook()
     if not ItemLevelDecimal.SetupHook() then
         -- Retry if frame not ready yet
         C_Timer.After(0.5, ItemLevelDecimal.TrySetupHook)
+    else
+        -- Hook is ready, update display immediately if character frame is shown
+        if CharacterFrame and CharacterFrame:IsShown() then
+            ItemLevelDecimal.UpdateDisplay()
+        end
     end
 end
 
 function ItemLevelDecimal.Initialize()
+    -- Only initialize if feature is enabled
+    if not SettingsManager:Get("showItemLevelDecimals") then return end
+    
     -- Setup hook when character frame is shown
     if CharacterFrame then
-        CharacterFrame:HookScript("OnShow", ItemLevelDecimal.TrySetupHook)
+        CharacterFrame:HookScript("OnShow", function()
+            ItemLevelDecimal.TrySetupHook()
+            -- Update display when character frame is shown
+            C_Timer.After(0.1, ItemLevelDecimal.UpdateDisplay)
+        end)
         
         -- Setup immediately if character frame is already open
         if CharacterFrame:IsShown() then
@@ -484,72 +518,84 @@ end
 -- ========================================
 local OptionsPanel = {}
 
-function OptionsPanel.CreateFontString(parent, font, justify, anchor, relativeTo, relativeAnchor, x, y, text)
-    local fs = parent:CreateFontString(nil, 'ARTWORK', font)
-    fs:SetJustifyH(justify)
-    fs:SetPoint(anchor, relativeTo, relativeAnchor, x, y)
-    fs:SetText(text)
-    return fs
-end
-
-function OptionsPanel.CreateCheckbox(parent, anchor, relativeTo, x, y, label, settingKey)
-    local checkbox = CreateFrame("CheckButton", nil, parent, "InterfaceOptionsCheckButtonTemplate")
-    checkbox:SetPoint(anchor, relativeTo, x, y)
-    checkbox.Text:SetText(label)
-    checkbox:SetScript("OnClick", function(self)
-        Settings:Set(settingKey, self:GetChecked() and true or false)
-    end)
-    checkbox:SetChecked(Settings:Get(settingKey))
-    return checkbox
-end
-
-function OptionsPanel.CreateReloadButton(parent, anchor, relativeTo, x, y)
-    local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    button:SetPoint(anchor, relativeTo, x, y)
-    button:SetText("Reload UI")
-    button:SetWidth(120)
-    button:SetScript("OnClick", ReloadUI)
-    return button
-end
-
 function OptionsPanel.Initialize()
-    local panel = CreateFrame("Frame", "TargetToolTipOptionsPanel", UIParent)
-    panel.name = "Target ToolTip"
+    local category, layout
+    local categoryName = "TargetToolTip"
     
-    -- Title and description
-    local title = OptionsPanel.CreateFontString(panel, 'GameFontNormalHuge', 'LEFT', 'TOPLEFT', panel, 'TOPLEFT', 16, -16, panel.name)
-    local subtitle = OptionsPanel.CreateFontString(panel, 'GameFontNormal', 'LEFT', 'TOPLEFT', title, 'BOTTOMLEFT', 0, -8, 'Configure which features are enabled.')
-    local reloadNote = OptionsPanel.CreateFontString(panel, 'GameFontHighlight', 'LEFT', 'TOPLEFT', subtitle, 'BOTTOMLEFT', 0, -4, 'Note: Changes require a UI reload (/reload) to take effect.')
-    
-    -- Tooltip Features Section
-    local tooltipHeader = OptionsPanel.CreateFontString(panel, 'GameFontNormalLarge', 'LEFT', 'TOPLEFT', reloadNote, 'BOTTOMLEFT', 0, -30, 'Tooltip Features')
-    local cbTooltips = OptionsPanel.CreateCheckbox(panel, "TOPLEFT", tooltipHeader, 0, -20, "Show targeting information in tooltips", "enableTooltips")
-    
-    -- Realm Name Removal Section
-    local realmHeader = OptionsPanel.CreateFontString(panel, 'GameFontNormalLarge', 'LEFT', 'TOPLEFT', cbTooltips, 'BOTTOMLEFT', 0, -30, 'Realm Name Removal')
-    local cbRealmRaid = OptionsPanel.CreateCheckbox(panel, "TOPLEFT", realmHeader, 0, -20, "Remove realm names from raid frames", "hideRealmRaid")
-    local cbRealmParty = OptionsPanel.CreateCheckbox(panel, "TOPLEFT", cbRealmRaid, 0, -25, "Remove realm names from party frames", "hideRealmParty")
-    
-    -- Reload Button
-    OptionsPanel.CreateReloadButton(panel, "TOPLEFT", cbRealmParty, 0, -40)
-    
-    -- Register the panel
-    local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
-    Settings.RegisterAddOnCategory(category)
-    
-    return category:GetID()
+    -- Create the layout using the War Within Settings API
+    if Settings and Settings.RegisterVerticalLayoutCategory then
+        local success, err = pcall(function()
+            category, layout = Settings.RegisterVerticalLayoutCategory(categoryName)
+            
+            -- Tooltip Features Section
+            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Tooltip Features"))
+            do
+                local variable = Settings.RegisterAddOnSetting(category, "TargetToolTip_EnableTooltips", "enableTooltips", TargetToolTip, Settings.VarType.Boolean, "Show targeting info in tooltips", true)
+                Settings.CreateCheckbox(category, variable, "Show targeting info in tooltips")
+            end
+            
+            -- Character Features Section  
+            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Character Features"))
+            do
+                local variable = Settings.RegisterAddOnSetting(category, "TargetToolTip_ItemLevelDecimals", "showItemLevelDecimals", TargetToolTip, Settings.VarType.Boolean, "Show item level decimals", true)
+                Settings.CreateCheckbox(category, variable, "Show item level decimals")
+            end
+            
+            -- Realm Name Removal Section
+            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Realm Name Removal"))
+            do
+                local variable1 = Settings.RegisterAddOnSetting(category, "TargetToolTip_HideRealmRaid", "hideRealmRaid", TargetToolTip, Settings.VarType.Boolean, "Hide realm names in raid frames", true)
+                Settings.CreateCheckbox(category, variable1, "Hide realm names in raid frames")
+                
+                local variable2 = Settings.RegisterAddOnSetting(category, "TargetToolTip_HideRealmParty", "hideRealmParty", TargetToolTip, Settings.VarType.Boolean, "Hide realm names in party frames", true)
+                Settings.CreateCheckbox(category, variable2, "Hide realm names in party frames")
+            end
+            
+            -- Apply Changes Section
+            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Apply Changes - Type /reload to apply settings"))
+            
+            Settings.RegisterAddOnCategory(category)
+        end)
+        
+        if success then
+            return category
+        else
+            print("TargetToolTip: Failed to register settings panel -", tostring(err))
+            return nil
+        end
+    else
+        print("TargetToolTip: Modern Settings API not available. Using saved variables only.")
+        return nil
+    end
 end
 
 -- ========================================
 -- SLASH COMMANDS
 -- ========================================
-local categoryID
+local optionsCategory
 
 local function OpenOptionsPanel()
-    if categoryID then
-        _G.Settings.OpenToCategory(categoryID)
+    if optionsCategory then
+        if Settings and Settings.OpenToCategory then
+            if optionsCategory.GetID then
+                local categoryID = optionsCategory:GetID()
+                Settings.OpenToCategory(categoryID)
+            else
+                Settings.OpenToCategory(optionsCategory)
+            end
+        elseif SettingsPanel and SettingsPanel.OpenToCategory then
+            SettingsPanel:OpenToCategory(optionsCategory)
+        elseif SettingsPanel then
+            SettingsPanel:Open()
+        else
+            print("TargetToolTip: Press ESC > Interface Options > AddOns > TargetToolTip")
+        end
     else
-        print("Target ToolTip: Options panel not available.")
+        if SettingsPanel then
+            SettingsPanel:Open()
+        else
+            print("TargetToolTip: Options panel unavailable")
+        end
     end
 end
 
@@ -561,12 +607,12 @@ SLASH_TARGETTOOLTIP2 = "/targettooltip"
 -- ADDON INITIALIZATION
 -- ========================================
 local function Initialize()
-    Settings:Initialize()
+    SettingsManager:Initialize()
     TooltipHandler.Initialize()
     RealmNameRemoval.Initialize()
     ItemLevelDecimal.Initialize()
     Cache:StartCleanupTimer()
-    categoryID = OptionsPanel.Initialize()
+    optionsCategory = OptionsPanel.Initialize()
 end
 
 -- Register addon loaded event

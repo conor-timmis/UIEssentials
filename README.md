@@ -1,4 +1,4 @@
-# Target ToolTip
+# TargetToolTip
 
 A World of Warcraft addon that enhances unit tooltips with targeting information. Initially built over one week as a learning project to understand how addons work. After years of playing WoW, I figured "why not" create my own. Learning Lua while building something for a game I play so much made the process much more engaging. I've also aimed to keep it lightweight and performant as far as I could understand at this point in time.
 
@@ -31,7 +31,7 @@ Simply hover over any unit to see the enhanced tooltip with targeting informatio
 Access the options panel to toggle features on/off:
 
 - Type `/tt` or `/targettooltip` in chat
-- Or navigate to **ESC → Interface → AddOns → Target ToolTip**
+- Or navigate to **ESC → Interface → AddOns → TargetToolTip**
 
 Available options:
 
@@ -43,9 +43,14 @@ Changes require a UI reload (`/reload`) to take effect.
 
 ## Version
 
-1.2.0
+1.3
 
 ## Changelog
+
+### 1.3.0 (23.11.2025)
+
+- Added Item Level with Decimal functionality
+- Added toggle into UI
 
 ### 1.2.0 (23.11.2025)
 
