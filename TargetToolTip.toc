@@ -3,6 +3,7 @@
 ## Notes: Shows targeting info in tooltips and removes realm names from party/raid frames.
 ## Author: Conor Timmis
 ## Version: 1.2
+## IconTexture: Interface\TargetingFrame\UI-RaidTargetingIcon_1
 ## SavedVariables: TargetToolTip
 
 TargetToolTip.lua
