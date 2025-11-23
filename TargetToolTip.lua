@@ -417,6 +417,69 @@ function RealmNameRemoval.Initialize()
 end
 
 -- ========================================
+-- ITEM LEVEL DECIMAL MODULE
+-- ========================================
+local ItemLevelDecimal = {}
+ItemLevelDecimal.isHooked = false
+ItemLevelDecimal.isUpdating = false
+
+function ItemLevelDecimal.SetupHook()
+    -- Only hook once
+    if ItemLevelDecimal.isHooked then return true end
+    
+    -- Wait for CharacterStatsPane to exist
+    if not CharacterStatsPane or not CharacterStatsPane.ItemLevelFrame or not CharacterStatsPane.ItemLevelFrame.Value then
+        return false
+    end
+    
+    local itemLevelText = CharacterStatsPane.ItemLevelFrame.Value
+    
+    -- Hook SetText to automatically add decimals to item level display
+    hooksecurefunc(itemLevelText, "SetText", function(self, text)
+        -- Prevent infinite recursion
+        if ItemLevelDecimal.isUpdating then return end
+        
+        -- Only modify if it's a whole number without decimals
+        if text and tonumber(text) and not string.find(text, "%.") then
+            local _, avgItemLevelEquipped = GetAverageItemLevel()
+            
+            if avgItemLevelEquipped and avgItemLevelEquipped > 0 then
+                local roundedValue = math.floor(avgItemLevelEquipped)
+                
+                -- Only replace if text matches the rounded item level
+                if tonumber(text) == roundedValue then
+                    ItemLevelDecimal.isUpdating = true
+                    self:SetText(string.format("%.2f", avgItemLevelEquipped))
+                    ItemLevelDecimal.isUpdating = false
+                end
+            end
+        end
+    end)
+    
+    ItemLevelDecimal.isHooked = true
+    return true
+end
+
+function ItemLevelDecimal.TrySetupHook()
+    if not ItemLevelDecimal.SetupHook() then
+        -- Retry if frame not ready yet
+        C_Timer.After(0.5, ItemLevelDecimal.TrySetupHook)
+    end
+end
+
+function ItemLevelDecimal.Initialize()
+    -- Setup hook when character frame is shown
+    if CharacterFrame then
+        CharacterFrame:HookScript("OnShow", ItemLevelDecimal.TrySetupHook)
+        
+        -- Setup immediately if character frame is already open
+        if CharacterFrame:IsShown() then
+            ItemLevelDecimal.TrySetupHook()
+        end
+    end
+end
+
+-- ========================================
 -- OPTIONS PANEL MODULE
 -- ========================================
 local OptionsPanel = {}
@@ -501,6 +564,7 @@ local function Initialize()
     Settings:Initialize()
     TooltipHandler.Initialize()
     RealmNameRemoval.Initialize()
+    ItemLevelDecimal.Initialize()
     Cache:StartCleanupTimer()
     categoryID = OptionsPanel.Initialize()
 end
@@ -514,3 +578,4 @@ initFrame:SetScript("OnEvent", function(self, event, loadedAddonName)
         self:UnregisterEvent("ADDON_LOADED")
     end
 end)
+
