@@ -10,6 +10,7 @@ local CONSTANTS = {
     MAX_PARTY_MEMBERS = 4,
     MAX_RAID_MEMBERS = 40,
     MAX_NAMEPLATES = 40,
+    CUTSCENE_CHECK_INTERVAL = 0.05, -- Check every 0.05 seconds (20 times per second)
     
     COLORS = {
         LABEL = "|cffff6600",
@@ -34,6 +35,8 @@ local DEFAULTS = {
     hideRealmParty = true,
     showItemLevelDecimals = true,
     showCursorHighlight = false,
+    cursorStyle = "square", -- "square" or "starsurge"
+    autoSkipCutscenes = true,
 }
 
 -- ========================================
@@ -515,16 +518,90 @@ function ItemLevelDecimal.Initialize()
 end
 
 -- ========================================
+-- CUTSCENE SKIPPER MODULE
+-- ========================================
+local CutsceneSkipper = {}
+CutsceneSkipper.monitorFrame = nil
+CutsceneSkipper.isInitialized = false
+
+function CutsceneSkipper.SkipCutscene()
+    if C_Movie and C_Movie.StopMovie then C_Movie.StopMovie() end
+    if C_Cinematic and C_Cinematic.CancelCinematic then C_Cinematic.CancelCinematic() end
+    if MovieFrame and MovieFrame:IsShown() then
+        if MovieFrame_StopMovie then MovieFrame_StopMovie() end
+        MovieFrame:Hide()
+    end
+    if CinematicFrame and CinematicFrame:IsShown() then
+        if CinematicFrame_CancelCinematic then CinematicFrame_CancelCinematic() end
+        CinematicFrame:Hide()
+    end
+    if ScenarioBlocksFrame and ScenarioBlocksFrame:IsShown() then ScenarioBlocksFrame:Hide() end
+    if StopMovie then StopMovie() end
+end
+
+function CutsceneSkipper.Enable()
+    if CutsceneSkipper.isInitialized then return end
+    if not CutsceneSkipper.monitorFrame then CutsceneSkipper.monitorFrame = CreateFrame("Frame") end
+    local f = CutsceneSkipper.monitorFrame
+    f:RegisterEvent("CINEMATIC_START")
+    f:RegisterEvent("PLAY_MOVIE")
+    f:SetScript("OnEvent", function(self, event) if event == "CINEMATIC_START" or event == "PLAY_MOVIE" then CutsceneSkipper.SkipCutscene() end end)
+    f:SetScript("OnUpdate", function(self, elapsed)
+        self.timeSinceLastCheck = (self.timeSinceLastCheck or 0) + elapsed
+        if self.timeSinceLastCheck >= CONSTANTS.CUTSCENE_CHECK_INTERVAL then
+            self.timeSinceLastCheck = 0
+            CutsceneSkipper.SkipCutscene()
+        end
+    end)
+    f.timeSinceLastCheck = 0
+    if MovieFrame and not CutsceneSkipper.movieFrameHooked then
+        MovieFrame:HookScript("OnShow", CutsceneSkipper.SkipCutscene)
+        CutsceneSkipper.movieFrameHooked = true
+    end
+    if CinematicFrame and not CutsceneSkipper.cinematicFrameHooked then
+        CinematicFrame:HookScript("OnShow", CutsceneSkipper.SkipCutscene)
+        CutsceneSkipper.cinematicFrameHooked = true
+    end
+    if MovieFrame_PlayMovie and not CutsceneSkipper.playMovieHooked then
+        hooksecurefunc("MovieFrame_PlayMovie", CutsceneSkipper.SkipCutscene)
+        CutsceneSkipper.playMovieHooked = true
+    end
+    CutsceneSkipper.isInitialized = true
+end
+
+function CutsceneSkipper.Disable()
+    if not CutsceneSkipper.isInitialized then return end
+    if CutsceneSkipper.monitorFrame then
+        CutsceneSkipper.monitorFrame:UnregisterAllEvents()
+        CutsceneSkipper.monitorFrame:SetScript("OnEvent", nil)
+        CutsceneSkipper.monitorFrame:SetScript("OnUpdate", nil)
+    end
+    CutsceneSkipper.isInitialized = false
+end
+
+function CutsceneSkipper.Initialize()
+    if SettingsManager:Get("autoSkipCutscenes") then CutsceneSkipper.Enable() else CutsceneSkipper.Disable() end
+end
+
+-- ========================================
 -- CURSOR HIGHLIGHT MODULE
 -- ========================================
 local CursorHighlight = {}
 CursorHighlight.frame = nil
+CursorHighlight.modelFrame = nil
 CursorHighlight.scaleTicker = nil
 
 -- Constants
 local CURSOR_SIZE = 13.25
-local CURSOR_COLOR = {0, 1, 0, 1.0} -- Solid green
-local SCALE_UPDATE_INTERVAL = 1.0 -- Update scale cache every second
+local CURSOR_COLOR = {0, 1, 0, 1.0}
+local SCALE_UPDATE_INTERVAL = 1.0
+
+-- Star Surge constants
+local STAR_SURGE_MODEL_ID = 1513212
+local STAR_SURGE_SCALE = 0.001
+local STAR_SURGE_ALPHA = 1.0
+local STAR_SURGE_OFFSET_X = 8
+local STAR_SURGE_OFFSET_Y = -8
 
 function CursorHighlight.CreateHighlightFrame()
     if CursorHighlight.frame then return end
@@ -552,53 +629,60 @@ function CursorHighlight.CreateHighlightFrame()
     CursorHighlight.frame = frame
 end
 
+function CursorHighlight.CreateStarSurgeModel()
+    if CursorHighlight.modelFrame then 
+        -- Reset the model if it already exists
+        CursorHighlight.modelFrame:ClearModel()
+        return 
+    end
+    
+    -- Create model frame
+    local modelFrame = CreateFrame("PlayerModel", "UIEssentialsStarSurge", UIParent)
+    modelFrame:SetFrameStrata("TOOLTIP")
+    modelFrame:SetFrameLevel(100)
+    modelFrame:SetAllPoints(UIParent)
+    modelFrame:EnableMouse(false)
+    modelFrame:Hide()
+    
+    -- Set up the Star Surge model
+    modelFrame:SetModel(STAR_SURGE_MODEL_ID)
+    modelFrame:SetAlpha(STAR_SURGE_ALPHA)
+    
+    CursorHighlight.modelFrame = modelFrame
+end
+
 function CursorHighlight.StopTracking()
-    local frame = CursorHighlight.frame
-    if not frame then return end
-    
-    frame:Hide()
-    frame:SetScript("OnUpdate", nil)
-    
-    -- Clean up scale ticker
+    if CursorHighlight.frame then
+        CursorHighlight.frame:Hide()
+        CursorHighlight.frame:SetScript("OnUpdate", nil)
+    end
+    if CursorHighlight.modelFrame then
+        CursorHighlight.modelFrame:Hide()
+        CursorHighlight.modelFrame:SetScript("OnUpdate", nil)
+    end
     if CursorHighlight.scaleTicker then
         CursorHighlight.scaleTicker:Cancel()
         CursorHighlight.scaleTicker = nil
     end
 end
 
-function CursorHighlight.StartTracking()
-    if not SettingsManager:Get("showCursorHighlight") then
-        CursorHighlight.StopTracking()
-        return
-    end
-    
+function CursorHighlight.StartTrackingSquare()
     CursorHighlight.CreateHighlightFrame()
     local frame = CursorHighlight.frame
-    
-    -- Cache references for performance
     local uiParent = UIParent
     local cachedScale = frame.cachedScale
     
     frame:Show()
-    
-    -- Update position only when cursor moves (performance optimization)
     frame:SetScript("OnUpdate", function(self)
         local x, y = GetCursorPosition()
-        
-        -- Convert to UI coordinates
-        x = x / cachedScale
-        y = y / cachedScale
-        
-        -- Only update if position changed (avoids unnecessary frame operations)
+        x, y = x / cachedScale, y / cachedScale
         if x ~= self.lastX or y ~= self.lastY then
-            self.lastX = x
-            self.lastY = y
+            self.lastX, self.lastY = x, y
             self:ClearAllPoints()
             self:SetPoint("TOPLEFT", uiParent, "BOTTOMLEFT", x, y)
         end
     end)
     
-    -- Periodically refresh scale cache (only if ticker doesn't exist)
     if not CursorHighlight.scaleTicker then
         CursorHighlight.scaleTicker = C_Timer.NewTicker(SCALE_UPDATE_INTERVAL, function()
             if frame and frame:IsShown() then
@@ -606,18 +690,69 @@ function CursorHighlight.StartTracking()
                 if newScale ~= cachedScale then
                     cachedScale = newScale
                     frame.cachedScale = cachedScale
-                    -- Force position update by resetting last position
-                    frame.lastX = 0
-                    frame.lastY = 0
+                    frame.lastX, frame.lastY = 0, 0
                 end
             else
-                -- Clean up ticker if frame is hidden
                 if CursorHighlight.scaleTicker then
                     CursorHighlight.scaleTicker:Cancel()
                     CursorHighlight.scaleTicker = nil
                 end
             end
         end)
+    end
+end
+
+function CursorHighlight.StartTrackingStarSurge()
+    if CursorHighlight.frame then
+        CursorHighlight.frame:Hide()
+        CursorHighlight.frame:SetScript("OnUpdate", nil)
+    end
+    
+    CursorHighlight.CreateStarSurgeModel()
+    local modelFrame = CursorHighlight.modelFrame
+    local cachedScale = UIParent:GetEffectiveScale()
+    local screenWidth, screenHeight = UIParent:GetWidth(), UIParent:GetHeight()
+    local screenHypotenuse = math.sqrt(screenWidth * screenWidth + screenHeight * screenHeight)
+    local posVector = CreateVector3D(0, 0, 0)
+    local rotVector = CreateVector3D(0, 315, 0)
+    local lastX, lastY = 0, 0
+    
+    modelFrame:Show()
+    modelFrame:SetScript("OnUpdate", function(self)
+        local x, y = GetCursorPosition()
+        x, y = x / cachedScale, y / cachedScale
+        
+        if x == lastX and y == lastY then return end
+        lastX, lastY = x, y
+        
+        local offsetX = x + STAR_SURGE_OFFSET_X
+        local offsetY = y + STAR_SURGE_OFFSET_Y
+        posVector:SetXYZ(offsetX / screenHypotenuse, offsetY / screenHypotenuse, 0)
+        modelFrame:SetTransform(posVector, rotVector, STAR_SURGE_SCALE)
+        
+        local currentTime = GetTime()
+        if not self.lastScaleCheckTime or (currentTime - self.lastScaleCheckTime) >= 0.5 then
+            local newScale = UIParent:GetEffectiveScale()
+            if newScale ~= cachedScale then
+                cachedScale = newScale
+                screenWidth, screenHeight = UIParent:GetWidth(), UIParent:GetHeight()
+                screenHypotenuse = math.sqrt(screenWidth * screenWidth + screenHeight * screenHeight)
+            end
+            self.lastScaleCheckTime = currentTime
+        end
+    end)
+end
+
+function CursorHighlight.StartTracking()
+    if not SettingsManager:Get("showCursorHighlight") then
+        CursorHighlight.StopTracking()
+        return
+    end
+    local style = SettingsManager:Get("cursorStyle") or "square"
+    if style == "starsurge" then
+        CursorHighlight.StartTrackingStarSurge()
+    else
+        CursorHighlight.StartTrackingSquare()
     end
 end
 
@@ -634,8 +769,10 @@ local OptionsPanel = {}
 OptionsPanel.frame = nil
 
 -- UI Constants
-local PANEL_WIDTH = 420
-local PANEL_HEIGHT = 300
+local PANEL_WIDTH = 500
+local PANEL_HEIGHT = 350
+local COLUMN_WIDTH = 230
+local COLUMN_SPACING = 20
 local BEIGE_BG = {0.85, 0.82, 0.75, 0.95}
 local BEIGE_BORDER = {0.65, 0.60, 0.50, 1.0}
 
@@ -691,6 +828,62 @@ local function CreateSectionHeader(parent, text, x, y)
     header:SetTextColor(unpack(COLOR_HEADER))
     header:SetText(text)
     return header
+end
+
+-- Helper function to create a dropdown menu
+local function CreateDropdown(parent, label, tooltip, x, y, options, getFunc, setFunc)
+    -- Label
+    local labelText = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    labelText:SetPoint("TOPLEFT", x, y)
+    labelText:SetText(label)
+    labelText:SetTextColor(unpack(COLOR_LABEL))
+    
+    -- Dropdown button
+    local dropdown = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
+    dropdown:SetPoint("TOPLEFT", labelText, "BOTTOMLEFT", -15, -5)
+    
+    -- Initialize dropdown
+    UIDropDownMenu_SetWidth(dropdown, 150)
+    UIDropDownMenu_SetText(dropdown, options[getFunc()] or options[1])
+    
+    -- Dropdown menu function
+    local function InitializeDropdown(self, level)
+        local info = UIDropDownMenu_CreateInfo()
+        for value, text in pairs(options) do
+            info.text = text
+            info.value = value
+            info.func = function()
+                UIDropDownMenu_SetSelectedValue(dropdown, value)
+                UIDropDownMenu_SetText(dropdown, text)
+                if setFunc then setFunc(value) end
+            end
+            info.checked = (getFunc() == value)
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end
+    
+    UIDropDownMenu_Initialize(dropdown, InitializeDropdown)
+    
+    -- Tooltip
+    if tooltip then
+        dropdown:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(tooltip, nil, nil, nil, nil, true)
+            GameTooltip:Show()
+        end)
+        dropdown:SetScript("OnLeave", function(self)
+            GameTooltip:Hide()
+        end)
+    end
+    
+    -- Update function
+    dropdown.UpdateState = function()
+        local currentValue = getFunc()
+        UIDropDownMenu_SetSelectedValue(dropdown, currentValue)
+        UIDropDownMenu_SetText(dropdown, options[currentValue] or options[1])
+    end
+    
+    return dropdown
 end
 
 function OptionsPanel.CreatePanel()
@@ -753,39 +946,51 @@ function OptionsPanel.CreatePanel()
     -- Content area
     local content = CreateFrame("Frame", nil, frame)
     content:SetPoint("TOPLEFT", 12, -45)
-    content:SetPoint("BOTTOMRIGHT", -12, 40)
+    content:SetPoint("BOTTOMRIGHT", -12, 50)
     
-    -- Tooltip Features Section
-    local yOffset = -5
-    CreateSectionHeader(content, "Tooltip Features", 8, yOffset)
+    -- Left column
+    local leftColumn = CreateFrame("Frame", nil, content)
+    leftColumn:SetPoint("TOPLEFT", content, "TOPLEFT", 8, -5)
+    leftColumn:SetWidth(COLUMN_WIDTH)
+    leftColumn:SetHeight(1)
+    
+    -- Right column
+    local rightColumn = CreateFrame("Frame", nil, content)
+    rightColumn:SetPoint("TOPLEFT", leftColumn, "TOPRIGHT", COLUMN_SPACING, 0)
+    rightColumn:SetWidth(COLUMN_WIDTH)
+    rightColumn:SetHeight(1)
+    
+    -- LEFT COLUMN: Tooltip Features Section
+    local yOffset = 0
+    CreateSectionHeader(leftColumn, "Tooltip Features", 0, yOffset)
     yOffset = yOffset - 18
     
-    local enableTooltips = CreateCheckbox(content, "Show targeting info in tooltips", 
-        "Display who is targeting what in unit tooltips", 16, yOffset,
+    local enableTooltips = CreateCheckbox(leftColumn, "Show targeting info in tooltips", 
+        "Display who is targeting what in unit tooltips", 8, yOffset,
         function() return SettingsManager:Get("enableTooltips") end,
         function(val) SettingsManager:Set("enableTooltips", val) end
     )
     yOffset = yOffset - 22
     
-    -- Character Features Section
+    -- LEFT COLUMN: Character Features Section
     yOffset = yOffset - 8
-    CreateSectionHeader(content, "Character Features", 8, yOffset)
+    CreateSectionHeader(leftColumn, "Character Features", 0, yOffset)
     yOffset = yOffset - 18
     
-    local itemLevelDecimals = CreateCheckbox(content, "Show item level decimals", 
-        "Display item level with decimal precision in character frame", 16, yOffset,
+    local itemLevelDecimals = CreateCheckbox(leftColumn, "Show item level decimals", 
+        "Display item level with decimal precision in character frame", 8, yOffset,
         function() return SettingsManager:Get("showItemLevelDecimals") end,
         function(val) SettingsManager:Set("showItemLevelDecimals", val) end
     )
     yOffset = yOffset - 22
     
-    -- UI Features Section
+    -- LEFT COLUMN: UI Features Section
     yOffset = yOffset - 8
-    CreateSectionHeader(content, "UI Features", 8, yOffset)
+    CreateSectionHeader(leftColumn, "UI Features", 0, yOffset)
     yOffset = yOffset - 18
     
-    local cursorHighlight = CreateCheckbox(content, "Show green cursor highlight", 
-        "Display a green square at your cursor position", 16, yOffset,
+    local cursorHighlight = CreateCheckbox(leftColumn, "Show cursor highlight", 
+        "Display a visual indicator at your cursor position", 8, yOffset,
         function() return SettingsManager:Get("showCursorHighlight") end,
         function(val) 
             SettingsManager:Set("showCursorHighlight", val)
@@ -798,44 +1003,77 @@ function OptionsPanel.CreatePanel()
     )
     yOffset = yOffset - 22
     
-    -- Realm Name Removal Section
-    yOffset = yOffset - 8
-    CreateSectionHeader(content, "Realm Name Removal", 8, yOffset)
+    -- LEFT COLUMN: Cursor style dropdown
+    local cursorStyleDropdown = CreateDropdown(leftColumn, "Cursor style:", 
+        "Choose between a green square or Star Surge trail", 8, yOffset,
+        {square = "Green Square", starsurge = "Star Surge"},
+        function() return SettingsManager:Get("cursorStyle") or "square" end,
+        function(val)
+            SettingsManager:Set("cursorStyle", val)
+            if SettingsManager:Get("showCursorHighlight") then
+                CursorHighlight.StartTracking()
+            end
+        end
+    )
+    
+    -- RIGHT COLUMN: Realm Name Removal Section
+    yOffset = 0
+    CreateSectionHeader(rightColumn, "Realm Name Removal", 0, yOffset)
     yOffset = yOffset - 18
     
-    local hideRealmRaid = CreateCheckbox(content, "Hide realm names in raid frames", 
-        "Remove realm names from raid unit frames", 16, yOffset,
+    local hideRealmRaid = CreateCheckbox(rightColumn, "Hide realm names in raid frames", 
+        "Remove realm names from raid unit frames", 8, yOffset,
         function() return SettingsManager:Get("hideRealmRaid") end,
         function(val) SettingsManager:Set("hideRealmRaid", val) end
     )
     yOffset = yOffset - 22
     
-    local hideRealmParty = CreateCheckbox(content, "Hide realm names in party frames", 
-        "Remove realm names from party unit frames", 16, yOffset,
+    local hideRealmParty = CreateCheckbox(rightColumn, "Hide realm names in party frames", 
+        "Remove realm names from party unit frames", 8, yOffset,
         function() return SettingsManager:Get("hideRealmParty") end,
         function(val) SettingsManager:Set("hideRealmParty", val) end
     )
     yOffset = yOffset - 22
     
-    -- Reload button
+    -- RIGHT COLUMN: Cutscene Skipper Section
+    yOffset = yOffset - 8
+    CreateSectionHeader(rightColumn, "Cutscene Features", 0, yOffset)
+    yOffset = yOffset - 18
+    
+    local autoSkipCutscenes = CreateCheckbox(rightColumn, "Auto skip all cutscenes", 
+        "Automatically skip all cutscenes and movies, regardless of whether you've seen them", 8, yOffset,
+        function() return SettingsManager:Get("autoSkipCutscenes") end,
+        function(val) 
+            SettingsManager:Set("autoSkipCutscenes", val)
+            if val then
+                CutsceneSkipper.Enable()
+            else
+                CutsceneSkipper.Disable()
+            end
+        end
+    )
+    
+    -- Reload button (centered at bottom)
     local reloadBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     reloadBtn:SetSize(90, 26)
-    reloadBtn:SetPoint("BOTTOMRIGHT", -12, 8)
+    reloadBtn:SetPoint("BOTTOM", frame, "BOTTOM", 0, 12)
     reloadBtn:SetText("Reload UI")
     reloadBtn:SetScript("OnClick", ReloadUI)
     
     local reloadText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    reloadText:SetPoint("RIGHT", reloadBtn, "LEFT", -8, 0)
+    reloadText:SetPoint("BOTTOM", reloadBtn, "TOP", 0, 4)
     reloadText:SetText("Please /reload to apply ANY changes")
     reloadText:SetTextColor(unpack(COLOR_HINT))
     
-    -- Store checkboxes for updates
+    -- Store checkboxes and dropdowns for updates
     frame.checkboxes = {
         enableTooltips = enableTooltips,
         itemLevelDecimals = itemLevelDecimals,
         cursorHighlight = cursorHighlight,
+        cursorStyle = cursorStyleDropdown,
         hideRealmRaid = hideRealmRaid,
-        hideRealmParty = hideRealmParty
+        hideRealmParty = hideRealmParty,
+        autoSkipCutscenes = autoSkipCutscenes
     }
     
     -- Update function
@@ -890,6 +1128,7 @@ local function Initialize()
     RealmNameRemoval.Initialize()
     ItemLevelDecimal.Initialize()
     CursorHighlight.Initialize()
+    CutsceneSkipper.Initialize()
     Cache:StartCleanupTimer()
     OptionsPanel.Initialize()
 end
