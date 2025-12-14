@@ -55,11 +55,16 @@ Changes require a UI reload (`/reload`) to take effect.
 
 ## Version
 
-2.0
+2.2
 
 ## Changelog
 
-### 2.0 (Current)
+### 2.2 (Current)
+
+- Add Star Surge Cursor trail (found in dropdown in UI)
+- Add Cutscene Skipper module, this will automatically skip every time, including not seen before cutscenes
+
+### 2.0
 
 - Rename Addon
 
