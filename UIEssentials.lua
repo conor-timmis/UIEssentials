@@ -21,6 +21,14 @@ local CONSTANTS = {
         DEFAULT = "|cffffffff"
     },
     
+    ILVL_COLORS = {
+        GREY = "|cff9d9d9d",
+        GREEN = "|cff1eff00",
+        BLUE = "|cff0070dd",
+        PURPLE = "|cffa335ee",
+        ORANGE = "|cffff8000"
+    },
+    
     REALM_FRAME_PATTERNS = {
         "^PartyMemberFrame%d",
         "^CompactRaidFrame%d",
@@ -200,6 +208,93 @@ function Utils.MatchesFramePattern(frameName)
     return false
 end
 
+function Utils.GetILvlColor(ilvl)
+    if not ilvl then return CONSTANTS.ILVL_COLORS.GREY end
+    if ilvl >= 720 then return CONSTANTS.ILVL_COLORS.ORANGE end
+    if ilvl >= 710 then return CONSTANTS.ILVL_COLORS.PURPLE end
+    if ilvl >= 690 then return CONSTANTS.ILVL_COLORS.BLUE end
+    if ilvl >= 670 then return CONSTANTS.ILVL_COLORS.GREEN end
+    return CONSTANTS.ILVL_COLORS.GREY
+end
+
+function Utils.GetUnitItemLevel(unit)
+    if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then return nil end
+    
+    if UnitIsUnit(unit, "player") then
+        local _, avgItemLevelEquipped = GetAverageItemLevel()
+        return avgItemLevelEquipped and math.floor(avgItemLevelEquipped) or nil
+    end
+    
+    local total, count = 0, 0
+    for i = 1, 18 do
+        if i ~= 4 then -- Skip shirt
+            local itemLink = GetInventoryItemLink(unit, i)
+            if itemLink then
+                local itemLevel = GetDetailedItemLevelInfo(itemLink)
+                if itemLevel and itemLevel > 0 then
+                    total = total + itemLevel
+                    count = count + 1
+                end
+            end
+        end
+    end
+    
+    return count > 0 and math.floor(total / count) or nil
+end
+
+-- ========================================
+-- ITEM LEVEL INSPECTOR MODULE
+-- ========================================
+local ItemLevelInspector = {}
+ItemLevelInspector.cache = {}
+ItemLevelInspector.pending = {}
+
+function ItemLevelInspector:GetItemLevel(unit)
+    if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then return nil end
+    if UnitIsUnit(unit, "player") then return Utils.GetUnitItemLevel(unit) end
+    
+    local guid = UnitGUID(unit)
+    if not guid then return nil end
+    
+    -- Check cache (5 min)
+    local cached = self.cache[guid]
+    if cached and (GetTime() - cached.time) < 300 then
+        return cached.ilvl
+    end
+    
+    -- Try to get directly
+    local ilvl = Utils.GetUnitItemLevel(unit)
+    if ilvl and ilvl > 0 then
+        self.cache[guid] = {ilvl = ilvl, time = GetTime()}
+        return ilvl
+    end
+    
+    -- Request inspection if not pending and in range
+    if not self.pending[guid] and CanInspect(unit) and CheckInteractDistance(unit, 1) then
+        NotifyInspect(unit)
+        self.pending[guid] = true
+    end
+    
+    return nil
+end
+
+function ItemLevelInspector:Initialize()
+    local frame = CreateFrame("Frame")
+    frame:RegisterEvent("INSPECT_READY")
+    frame:SetScript("OnEvent", function(self, event, guid)
+        local ilvl = Utils.GetUnitItemLevel("mouseover")
+        if ilvl and ilvl > 0 then
+            ItemLevelInspector.cache[guid] = {ilvl = ilvl, time = GetTime()}
+            Cache.data[guid] = nil -- Clear tooltip cache
+            if UnitExists("mouseover") and UnitGUID("mouseover") == guid and GameTooltip:IsShown() then
+                GameTooltip:SetUnit("mouseover") -- Refresh
+            end
+        end
+        ItemLevelInspector.pending[guid] = nil
+        ClearInspectPlayer()
+    end)
+end
+
 -- ========================================
 -- TARGETING SCANNER MODULE
 -- ========================================
@@ -240,19 +335,28 @@ end
 function TargetingScanner.GetUnitsTargeting(targetUnit)
     local targeters = {}
     
+    -- Check player first
+    if TargetingScanner.IsUnitTargeting("player", targetUnit) then
+        TargetingScanner.AddTargeter("player", targeters, false)
+    end
+    
+    -- Enable duplicate checking for all subsequent scans to prevent duplicates
+    -- (e.g., when targeting yourself, both player and nameplate might match)
+    local checkDuplicates = true
+    
     -- Check party (only if not in raid to avoid duplicates)
     if IsInGroup() and not IsInRaid() then
-        TargetingScanner.ScanUnits("party", CONSTANTS.MAX_PARTY_MEMBERS, targetUnit, targeters, false)
+        TargetingScanner.ScanUnits("party", CONSTANTS.MAX_PARTY_MEMBERS, targetUnit, targeters, checkDuplicates)
     end
     
     -- Check raid
     if IsInRaid() then
-        TargetingScanner.ScanUnits("raid", CONSTANTS.MAX_RAID_MEMBERS, targetUnit, targeters, false)
+        TargetingScanner.ScanUnits("raid", CONSTANTS.MAX_RAID_MEMBERS, targetUnit, targeters, checkDuplicates)
     end
     
     -- Check nameplates (skip in raids for performance)
     if not IsInRaid() then
-        TargetingScanner.ScanUnits("nameplate", CONSTANTS.MAX_NAMEPLATES, targetUnit, targeters, true)
+        TargetingScanner.ScanUnits("nameplate", CONSTANTS.MAX_NAMEPLATES, targetUnit, targeters, checkDuplicates)
     end
     
     return targeters
@@ -296,7 +400,18 @@ function TooltipRenderer.RenderTargetersList(targeters)
     return lines
 end
 
-function TooltipRenderer.ApplyTooltip(tooltip, targetText, targeterLines)
+function TooltipRenderer.RenderItemLevel(ilvl)
+    if not ilvl then return "" end
+    
+    local color = Utils.GetILvlColor(ilvl)
+    return CONSTANTS.COLORS.LABEL .. "iLvl: |r" .. color .. ilvl .. "|r"
+end
+
+function TooltipRenderer.ApplyTooltip(tooltip, ilvlText, targetText, targeterLines)
+    if ilvlText and ilvlText ~= "" then
+        tooltip:AddLine(ilvlText)
+    end
+    
     if targetText and targetText ~= "" then
         tooltip:AddLine(targetText)
     end
@@ -323,7 +438,7 @@ function TooltipHandler.AddTargetInfo(tooltip, data)
     -- Try cache first
     local cached = Cache:Get(data.guid)
     if cached then
-        TooltipRenderer.ApplyTooltip(tooltip, cached.targetText, cached.targeterLines)
+        TooltipRenderer.ApplyTooltip(tooltip, cached.ilvlText, cached.targetText, cached.targeterLines)
         return
     end
     
@@ -332,8 +447,17 @@ function TooltipHandler.AddTargetInfo(tooltip, data)
     if not unit or not UnitExists(unit) then return end
     
     -- Build tooltip data
+    local ilvlText = ""
     local targetText = ""
     local targeterLines = {}
+    
+    -- Get item level (only for players)
+    if UnitIsPlayer(unit) then
+        local ilvl = ItemLevelInspector:GetItemLevel(unit)
+        if ilvl then
+            ilvlText = TooltipRenderer.RenderItemLevel(ilvl)
+        end
+    end
     
     -- Who is this unit targeting?
     local targetUnit = unit .. "target"
@@ -347,13 +471,19 @@ function TooltipHandler.AddTargetInfo(tooltip, data)
         targeterLines = TooltipRenderer.RenderTargetersList(targeters)
     end
     
-    -- Cache for future
-    Cache:Set(data.guid, {
-        targetText = targetText,
-        targeterLines = targeterLines
-    })
+    -- Only cache if we have item level data (for players) or if it's not a player
+    -- This prevents caching "no ilvl" results that might load later
+    local shouldCache = not UnitIsPlayer(unit) or (ilvlText and ilvlText ~= "")
     
-    TooltipRenderer.ApplyTooltip(tooltip, targetText, targeterLines)
+    if shouldCache then
+        Cache:Set(data.guid, {
+            ilvlText = ilvlText,
+            targetText = targetText,
+            targeterLines = targeterLines
+        })
+    end
+    
+    TooltipRenderer.ApplyTooltip(tooltip, ilvlText, targetText, targeterLines)
 end
 
 function TooltipHandler.Initialize()
@@ -602,6 +732,7 @@ local STAR_SURGE_SCALE = 0.001
 local STAR_SURGE_ALPHA = 1.0
 local STAR_SURGE_OFFSET_X = 8
 local STAR_SURGE_OFFSET_Y = -8
+local STAR_SURGE_MOVEMENT_THRESHOLD = 0.1
 
 function CursorHighlight.CreateHighlightFrame()
     if CursorHighlight.frame then return end
@@ -609,7 +740,7 @@ function CursorHighlight.CreateHighlightFrame()
     -- Use TOOLTIP
     local frame = CreateFrame("Frame", "UIEssentialsCursorHighlight", UIParent)
     frame:SetFrameStrata("TOOLTIP")
-    frame:SetFrameLevel(100) -- Much lower level, still visible but safer
+    frame:SetFrameLevel(100)
     frame:SetWidth(CURSOR_SIZE)
     frame:SetHeight(CURSOR_SIZE)
     frame:SetMovable(false)
@@ -633,6 +764,8 @@ function CursorHighlight.CreateStarSurgeModel()
     if CursorHighlight.modelFrame then 
         -- Reset the model if it already exists
         CursorHighlight.modelFrame:ClearModel()
+        CursorHighlight.modelFrame:SetModel(STAR_SURGE_MODEL_ID)
+        CursorHighlight.modelFrame:SetAlpha(STAR_SURGE_ALPHA)
         return 
     end
     
@@ -715,21 +848,53 @@ function CursorHighlight.StartTrackingStarSurge()
     local screenHypotenuse = math.sqrt(screenWidth * screenWidth + screenHeight * screenHeight)
     local posVector = CreateVector3D(0, 0, 0)
     local rotVector = CreateVector3D(0, 315, 0)
-    local lastX, lastY = 0, 0
+    local lastX, lastY = nil, nil
+    local isMoving = false
     
+    -- Keep frame shown but use alpha to control visibility (new UI system may need frame to be shown)
     modelFrame:Show()
+    modelFrame:SetAlpha(0) -- Start invisible
+    
     modelFrame:SetScript("OnUpdate", function(self)
         local x, y = GetCursorPosition()
         x, y = x / cachedScale, y / cachedScale
         
-        if x == lastX and y == lastY then return end
-        lastX, lastY = x, y
+        -- Initialize last position on first update
+        if lastX == nil or lastY == nil then
+            lastX, lastY = x, y
+            return
+        end
         
+        -- Always update position
         local offsetX = x + STAR_SURGE_OFFSET_X
         local offsetY = y + STAR_SURGE_OFFSET_Y
         posVector:SetXYZ(offsetX / screenHypotenuse, offsetY / screenHypotenuse, 0)
         modelFrame:SetTransform(posVector, rotVector, STAR_SURGE_SCALE)
         
+        -- Check if cursor moved (with threshold to avoid tiny movements)
+        local dx = x - lastX
+        local dy = y - lastY
+        local distanceSq = dx * dx + dy * dy
+        local moved = distanceSq > (STAR_SURGE_MOVEMENT_THRESHOLD * STAR_SURGE_MOVEMENT_THRESHOLD)
+        
+        if moved then
+            -- Cursor is moving - show the trail
+            if not isMoving then
+                modelFrame:SetAlpha(STAR_SURGE_ALPHA)
+                isMoving = true
+            end
+        else
+            -- Cursor stopped - hide the trail
+            if isMoving then
+                modelFrame:SetAlpha(0)
+                isMoving = false
+            end
+        end
+        
+        -- Always update last position
+        lastX, lastY = x, y
+        
+        -- Update scale cache periodically
         local currentTime = GetTime()
         if not self.lastScaleCheckTime or (currentTime - self.lastScaleCheckTime) >= 0.5 then
             local newScale = UIParent:GetEffectiveScale()
@@ -1115,15 +1280,60 @@ local function OpenOptionsPanel()
     OptionsPanel.Show()
 end
 
+local function TestItemLevel()
+    if not UnitExists("mouseover") then
+        print("|cffff6600UIEssentials:|r No unit under mouse")
+        return
+    end
+    
+    local name = UnitName("mouseover")
+    local isPlayer = UnitIsPlayer("mouseover")
+    local canInspect = CanInspect("mouseover")
+    local inRange = CheckInteractDistance("mouseover", 1)
+    local guid = UnitGUID("mouseover")
+    
+    print("|cffff6600UIEssentials Debug:|r")
+    print("  Name: " .. (name or "nil"))
+    print("  Is Player: " .. tostring(isPlayer))
+    print("  Can Inspect: " .. tostring(canInspect))
+    print("  In Range: " .. tostring(inRange))
+    print("  GUID: " .. (guid or "nil"))
+    
+    if isPlayer then
+        -- Request inspection
+        if canInspect and inRange then
+            NotifyInspect("mouseover")
+            print("  Requested inspection...")
+            C_Timer.After(1, function()
+                if UnitExists("mouseover") and UnitGUID("mouseover") == guid then
+                    local ilvl = Utils.GetUnitItemLevel("mouseover")
+                    print("  Item Level: " .. (ilvl or "nil"))
+                    if ilvl then
+                        local color = Utils.GetILvlColor(ilvl)
+                        print("  " .. color .. "iLvl: " .. ilvl .. "|r")
+                    end
+                    ClearInspectPlayer()
+                end
+            end)
+        else
+            print("  Cannot inspect (not in range or unit not inspectable)")
+        end
+    end
+end
+
 SlashCmdList.UIESSENTIALS = OpenOptionsPanel
 SLASH_UIESSENTIALS1 = "/ue"
 SLASH_UIESSENTIALS2 = "/uiessentials"
+
+SlashCmdList.UIESSENTIALS_TEST = TestItemLevel
+SLASH_UIESSENTIALS_TEST1 = "/uetest"
 
 -- ========================================
 -- ADDON INITIALIZATION
 -- ========================================
 local function Initialize()
     SettingsManager:Initialize()
+    ItemLevelInspector:Initialize()
     TooltipHandler.Initialize()
     RealmNameRemoval.Initialize()
     ItemLevelDecimal.Initialize()
