@@ -643,59 +643,100 @@ end
 local CutsceneSkipper = {}
 CutsceneSkipper.monitorFrame = nil
 CutsceneSkipper.isInitialized = false
+CutsceneSkipper.skipTimer = nil
 
 function CutsceneSkipper.SkipCutscene()
-    if C_Movie and C_Movie.StopMovie then C_Movie.StopMovie() end
-    if C_Cinematic and C_Cinematic.CancelCinematic then C_Cinematic.CancelCinematic() end
-    if MovieFrame and MovieFrame:IsShown() then
-        if MovieFrame_StopMovie then MovieFrame_StopMovie() end
-        MovieFrame:Hide()
+    -- Cancel any pending skip timer to avoid multiple attempts
+    if CutsceneSkipper.skipTimer then
+        CutsceneSkipper.skipTimer:Cancel()
+        CutsceneSkipper.skipTimer = nil
     end
-    if CinematicFrame and CinematicFrame:IsShown() then
-        if CinematicFrame_CancelCinematic then CinematicFrame_CancelCinematic() end
-        CinematicFrame:Hide()
-    end
-    if ScenarioBlocksFrame and ScenarioBlocksFrame:IsShown() then ScenarioBlocksFrame:Hide() end
-    if StopMovie then StopMovie() end
+    
+    CutsceneSkipper.skipTimer = C_Timer.NewTimer(0.1, function()
+        if C_Movie and C_Movie.IsPlayingMovie and C_Movie.IsPlayingMovie() then
+            if C_Movie.StopMovie then 
+                C_Movie.StopMovie() 
+            end
+        end
+        
+        if CinematicFrame and CinematicFrame:IsShown() then
+            if CinematicFrame_CancelCinematic then 
+                CinematicFrame_CancelCinematic() 
+            else
+                CinematicFrame:Hide()
+            end
+        end
+        
+        if MovieFrame and MovieFrame:IsShown() then
+            if MovieFrame.CloseDialog then
+                MovieFrame.CloseDialog:Click()
+            elseif GameMovieFinished then
+                GameMovieFinished()
+            else
+                MovieFrame:Hide()
+            end
+        end
+        
+        CutsceneSkipper.skipTimer = nil
+    end)
 end
 
 function CutsceneSkipper.Enable()
     if CutsceneSkipper.isInitialized then return end
-    if not CutsceneSkipper.monitorFrame then CutsceneSkipper.monitorFrame = CreateFrame("Frame") end
+    
+    if not CutsceneSkipper.monitorFrame then 
+        CutsceneSkipper.monitorFrame = CreateFrame("Frame") 
+    end
+    
     local f = CutsceneSkipper.monitorFrame
-    f:RegisterEvent("CINEMATIC_START")
     f:RegisterEvent("PLAY_MOVIE")
-    f:SetScript("OnEvent", function(self, event)
-        if event == "CINEMATIC_START" or event == "PLAY_MOVIE" then
+    f:RegisterEvent("CINEMATIC_START")
+    
+    f:SetScript("OnEvent", function(self, event, ...)
+        if event == "PLAY_MOVIE" or event == "CINEMATIC_START" then
             CutsceneSkipper.SkipCutscene()
         end
     end)
+    
     if MovieFrame and not CutsceneSkipper.movieFrameHooked then
-        MovieFrame:HookScript("OnShow", CutsceneSkipper.SkipCutscene)
+        MovieFrame:HookScript("OnShow", function()
+            CutsceneSkipper.SkipCutscene()
+        end)
         CutsceneSkipper.movieFrameHooked = true
     end
+
     if CinematicFrame and not CutsceneSkipper.cinematicFrameHooked then
-        CinematicFrame:HookScript("OnShow", CutsceneSkipper.SkipCutscene)
+        CinematicFrame:HookScript("OnShow", function()
+            CutsceneSkipper.SkipCutscene()
+        end)
         CutsceneSkipper.cinematicFrameHooked = true
     end
-    if MovieFrame_PlayMovie and not CutsceneSkipper.playMovieHooked then
-        hooksecurefunc("MovieFrame_PlayMovie", CutsceneSkipper.SkipCutscene)
-        CutsceneSkipper.playMovieHooked = true
-    end
+    
     CutsceneSkipper.isInitialized = true
 end
 
 function CutsceneSkipper.Disable()
     if not CutsceneSkipper.isInitialized then return end
+    
+    if CutsceneSkipper.skipTimer then
+        CutsceneSkipper.skipTimer:Cancel()
+        CutsceneSkipper.skipTimer = nil
+    end
+    
     if CutsceneSkipper.monitorFrame then
         CutsceneSkipper.monitorFrame:UnregisterAllEvents()
         CutsceneSkipper.monitorFrame:SetScript("OnEvent", nil)
     end
+    
     CutsceneSkipper.isInitialized = false
 end
 
 function CutsceneSkipper.Initialize()
-    if SettingsManager:Get("autoSkipCutscenes") then CutsceneSkipper.Enable() else CutsceneSkipper.Disable() end
+    if SettingsManager:Get("autoSkipCutscenes") then 
+        CutsceneSkipper.Enable() 
+    else 
+        CutsceneSkipper.Disable() 
+    end
 end
 
 -- ========================================
