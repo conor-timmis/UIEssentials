@@ -504,8 +504,11 @@ function RealmNameRemoval.InitializeRaidFrames()
     if not SettingsManager:Get("hideRealmRaid") then return end
     
     hooksecurefunc("CompactUnitFrame_UpdateName", function(frame)
-        if Utils.MatchesFramePattern(frame:GetName()) then
-            RealmNameRemoval.StripRealmFromFrame(frame)
+        if frame and not frame:IsForbidden() and frame.GetName then
+            local frameName = frame:GetName()
+            if Utils.MatchesFramePattern(frameName) then
+                RealmNameRemoval.StripRealmFromFrame(frame)
+            end
         end
     end)
 end
