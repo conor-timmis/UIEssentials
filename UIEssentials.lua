@@ -44,6 +44,7 @@ local DEFAULTS = {
     showCursorHighlight = false,
     cursorStyle = "square", -- "square" or "starsurge"
     autoSkipCutscenes = true,
+    disableAutoCompare = true,
 }
 
 -- ========================================
@@ -743,6 +744,32 @@ function CutsceneSkipper.Initialize()
 end
 
 -- ========================================
+-- AUTO-COMPARE DISABLER MODULE
+-- ========================================
+local AutoCompareDisabler = {}
+
+function AutoCompareDisabler.ApplySetting()
+
+    local shouldDisable = SettingsManager:Get("disableAutoCompare")
+    if shouldDisable then
+        SetCVar("alwaysCompareItems", "0")
+    else
+        SetCVar("alwaysCompareItems", "1")
+    end
+end
+
+function AutoCompareDisabler.Initialize()
+    AutoCompareDisabler.ApplySetting()
+    
+
+    local frame = CreateFrame("Frame")
+    frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    frame:SetScript("OnEvent", function(self, event)
+        AutoCompareDisabler.ApplySetting()
+    end)
+end
+
+-- ========================================
 -- CURSOR HIGHLIGHT MODULE
 -- ========================================
 local CursorHighlight = {}
@@ -1125,7 +1152,7 @@ function OptionsPanel.CreatePanel()
     -- Version
     local version = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     version:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -2)
-    version:SetText("Version 2.3")
+    version:SetText("Version 2.4")
     version:SetTextColor(unpack(COLOR_VERSION))
     
     -- Close button
@@ -1246,6 +1273,21 @@ function OptionsPanel.CreatePanel()
             end
         end
     )
+    yOffset = yOffset - 22
+    
+    -- RIGHT COLUMN: Item Comparison Section
+    yOffset = yOffset - 8
+    CreateSectionHeader(rightColumn, "Item Comparison", 0, yOffset)
+    yOffset = yOffset - 18
+    
+    local disableAutoCompare = CreateCheckbox(rightColumn, "Disable auto-comparison (Shift to compare)", 
+        "Restore old behavior: Hold Shift to compare gear instead of automatic comparison", 8, yOffset,
+        function() return SettingsManager:Get("disableAutoCompare") end,
+        function(val) 
+            SettingsManager:Set("disableAutoCompare", val)
+            AutoCompareDisabler.ApplySetting()
+        end
+    )
     
     -- Reload button (centered at bottom)
     local reloadBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
@@ -1267,7 +1309,8 @@ function OptionsPanel.CreatePanel()
         cursorStyle = cursorStyleDropdown,
         hideRealmRaid = hideRealmRaid,
         hideRealmParty = hideRealmParty,
-        autoSkipCutscenes = autoSkipCutscenes
+        autoSkipCutscenes = autoSkipCutscenes,
+        disableAutoCompare = disableAutoCompare
     }
     
     -- Update function
@@ -1366,6 +1409,7 @@ local function Initialize()
     TooltipHandler.Initialize()
     RealmNameRemoval.Initialize()
     ItemLevelDecimal.Initialize()
+    AutoCompareDisabler.Initialize()
     CursorHighlight.Initialize()
     CutsceneSkipper.Initialize()
     Cache:StartCleanupTimer()
