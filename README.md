@@ -26,6 +26,10 @@ A World of Warcraft addon that provides essential UI enhancements to improve you
 - Optional green cursor highlight to help track your cursor position
 - Useful for gameplay recording or accessibility
 
+### Item Comparison
+
+- Add Shift to compare BACK into WoW, recently Blizzard added auto comparison which this disables
+
 ## Installation
 
 1. Download or clone this repository
@@ -50,14 +54,21 @@ Available options:
 - **Show green cursor highlight** - Display a green square at cursor position
 - **Hide realm names in raid frames** - Clean up raid frame names
 - **Hide realm names in party frames** - Clean up party frame names
+- **Auto skip all cutscenes** - Automatically skip cutscenes and movies
+- **Disable auto-comparison (Shift to compare)** - Restore classic Shift-to-compare behavior
 
 Changes require a UI reload (`/reload`) to take effect.
 
 ## Version
 
-2.3
+2.4
 
 ## Changelog
+
+### 2.4
+
+- Add Item Comparison control - disable auto-comparison and restore Shift-to-compare behavior
+- Now respects the usual WoW behavior where holding Shift compares gear
 
 ### 2.3
 
