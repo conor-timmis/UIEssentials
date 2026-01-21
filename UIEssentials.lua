@@ -210,10 +210,10 @@ end
 
 function Utils.GetILvlColor(ilvl)
     if not ilvl then return CONSTANTS.ILVL_COLORS.GREY end
-    if ilvl >= 720 then return CONSTANTS.ILVL_COLORS.ORANGE end
-    if ilvl >= 710 then return CONSTANTS.ILVL_COLORS.PURPLE end
-    if ilvl >= 690 then return CONSTANTS.ILVL_COLORS.BLUE end
-    if ilvl >= 670 then return CONSTANTS.ILVL_COLORS.GREEN end
+    if ilvl >= 265 then return CONSTANTS.ILVL_COLORS.ORANGE end
+    if ilvl >= 250  then return CONSTANTS.ILVL_COLORS.PURPLE end
+    if ilvl >= 235 then return CONSTANTS.ILVL_COLORS.BLUE end
+    if ilvl >= 220 then return CONSTANTS.ILVL_COLORS.GREEN end
     return CONSTANTS.ILVL_COLORS.GREY
 end
 
