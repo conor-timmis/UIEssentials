@@ -82,22 +82,34 @@ local Cache = {}
 Cache.data = {}
 
 function Cache:Get(guid)
-    local cached = self.data[guid]
-    if not cached then return nil end
+    -- Handle tainted GUIDs in secure contexts
+    local success, result = pcall(function()
+        local cached = self.data[guid]
+        if not cached then return nil end
+        
+        if GetTime() - cached.timestamp > CONSTANTS.CACHE_TIMEOUT then
+            self.data[guid] = nil
+            return nil
+        end
+        
+        return cached.data
+    end)
     
-    if GetTime() - cached.timestamp > CONSTANTS.CACHE_TIMEOUT then
-        self.data[guid] = nil
+    if success then
+        return result
+    else
         return nil
     end
-    
-    return cached.data
 end
 
 function Cache:Set(guid, data)
-    self.data[guid] = {
-        data = data,
-        timestamp = GetTime()
-    }
+    -- Handle tainted GUIDs in secure contexts
+    pcall(function()
+        self.data[guid] = {
+            data = data,
+            timestamp = GetTime()
+        }
+    end)
 end
 
 function Cache:Clean()
@@ -128,39 +140,67 @@ local Utils = {}
 
 function Utils.StripRealm(name)
     if not name then return "" end
-    return name:match("^([^-]+)") or name
+    
+    -- Safely handle potentially tainted names
+    local success, result = pcall(function()
+        return name:match("^([^-]+)") or name
+    end)
+    
+    if success and result then
+        return result
+    else
+        -- If tainted or error, return empty string
+        return ""
+    end
 end
 
 function Utils.GetUnitColor(unit)
-    if UnitIsPlayer(unit) then
-        local _, class = UnitClass(unit)
-        if class then
-            local classColor = RAID_CLASS_COLORS[class]
-            if classColor then
-                return string.format("|cff%02x%02x%02x", 
-                    classColor.r * 255, 
-                    classColor.g * 255, 
-                    classColor.b * 255)
+    -- Safely handle potentially tainted unit data
+    local success, result = pcall(function()
+        if UnitIsPlayer(unit) then
+            local _, class = UnitClass(unit)
+            if class then
+                local classColor = RAID_CLASS_COLORS[class]
+                if classColor then
+                    return string.format("|cff%02x%02x%02x", 
+                        classColor.r * 255, 
+                        classColor.g * 255, 
+                        classColor.b * 255)
+                end
+            end
+        else
+            local reaction = UnitReaction(unit, "player")
+            if reaction then
+                if reaction >= 5 then return CONSTANTS.COLORS.FRIENDLY
+                elseif reaction == 4 then return CONSTANTS.COLORS.NEUTRAL
+                else return CONSTANTS.COLORS.HOSTILE
+                end
             end
         end
-    else
-        local reaction = UnitReaction(unit, "player")
-        if reaction then
-            if reaction >= 5 then return CONSTANTS.COLORS.FRIENDLY
-            elseif reaction == 4 then return CONSTANTS.COLORS.NEUTRAL
-            else return CONSTANTS.COLORS.HOSTILE
-            end
-        end
-    end
+        
+        return CONSTANTS.COLORS.DEFAULT
+    end)
     
-    return CONSTANTS.COLORS.DEFAULT
+    if success and result then
+        return result
+    else
+        return CONSTANTS.COLORS.DEFAULT
+    end
 end
 
 function Utils.FindUnitByGUID(guid)
+    -- Helper function to safely compare GUIDs (handles tainted values)
+    local function compareGUID(unitToken)
+        local success, isMatch = pcall(function()
+            return UnitGUID(unitToken) == guid
+        end)
+        return success and isMatch
+    end
+    
     -- Check common units first (most likely)
     local commonUnits = {"mouseover", "target", "focus"}
     for _, unitToken in ipairs(commonUnits) do
-        if UnitGUID(unitToken) == guid then
+        if compareGUID(unitToken) then
             return unitToken
         end
     end
@@ -169,7 +209,7 @@ function Utils.FindUnitByGUID(guid)
     if IsInGroup() then
         for i = 1, CONSTANTS.MAX_PARTY_MEMBERS do
             local partyUnit = "party" .. i
-            if UnitGUID(partyUnit) == guid then
+            if compareGUID(partyUnit) then
                 return partyUnit
             end
         end
@@ -179,7 +219,7 @@ function Utils.FindUnitByGUID(guid)
     if IsInRaid() then
         for i = 1, CONSTANTS.MAX_RAID_MEMBERS do
             local raidUnit = "raid" .. i
-            if UnitGUID(raidUnit) == guid then
+            if compareGUID(raidUnit) then
                 return raidUnit
             end
         end
@@ -188,7 +228,7 @@ function Utils.FindUnitByGUID(guid)
     -- Check nameplates
     for i = 1, CONSTANTS.MAX_NAMEPLATES do
         local nameplateUnit = "nameplate" .. i
-        if UnitGUID(nameplateUnit) == guid then
+        if compareGUID(nameplateUnit) then
             return nameplateUnit
         end
     end
@@ -295,7 +335,24 @@ function TargetingScanner.IsUnitTargeting(scanUnit, targetUnit)
     if not UnitExists(scanUnit) then return false end
     
     local scanTarget = scanUnit .. "target"
-    return UnitExists(scanTarget) and UnitIsUnit(scanTarget, targetUnit)
+    if not UnitExists(scanTarget) then return false end
+    
+    -- Safely check if units match (handles tainted values in secure contexts)
+    -- The boolean test must happen INSIDE pcall to catch taint errors
+    local success, isMatch = pcall(function()
+        -- Perform the boolean test inside pcall where taint errors can be caught
+        local match = UnitIsUnit(scanTarget, targetUnit)
+        -- Force the test to happen by using it in a conditional
+        if match then
+            return "yes"
+        else
+            return "no"
+        end
+    end)
+    
+    -- If pcall succeeded and returned "yes", units match
+    -- Otherwise (pcall failed due to taint, or returned "no"), no match
+    return success and isMatch == "yes"
 end
 
 function TargetingScanner.AddTargeter(scanUnit, targeters, checkDuplicates)
@@ -359,10 +416,20 @@ end
 local TooltipRenderer = {}
 
 function TooltipRenderer.RenderTargetLine(targetUnit)
-    if UnitIsUnit(targetUnit, "player") then
-        return CONSTANTS.COLORS.LABEL .. "Target: |r" .. CONSTANTS.COLORS.ME .. "Me|r"
+    -- Safely check if target is player (handles tainted values in secure contexts)
+    local success, result = pcall(function()
+        if UnitIsUnit(targetUnit, "player") then
+            return CONSTANTS.COLORS.LABEL .. "Target: |r" .. CONSTANTS.COLORS.ME .. "Me|r"
+        end
+        return nil
+    end)
+    
+    -- If the check succeeded and returned a value, use it
+    if success and result then
+        return result
     end
     
+    -- Otherwise, show the target's name
     local targetName = UnitName(targetUnit)
     if not targetName then return "" end
     
