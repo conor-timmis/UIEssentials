@@ -1,4 +1,4 @@
-## Interface: 110002
+## Interface: 120000
 ## Title: UIEssentials
 ## Notes: Essential UI enhancements including targeting info in tooltips, item level decimals, realm name removal, and cursor highlight.
 ## Author: Conor Timmis
