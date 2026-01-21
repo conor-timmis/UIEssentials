@@ -260,26 +260,42 @@ end
 function Utils.GetUnitItemLevel(unit)
     if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then return nil end
     
+    -- For the player, use the reliable API
     if UnitIsUnit(unit, "player") then
         local _, avgItemLevelEquipped = GetAverageItemLevel()
         return avgItemLevelEquipped and math.floor(avgItemLevelEquipped) or nil
     end
     
+    -- For other players, try the inspect API first (Retail WoW)
+    if C_PaperDollInfo and C_PaperDollInfo.GetInspectItemLevel then
+        local ilvl = C_PaperDollInfo.GetInspectItemLevel(unit)
+        if ilvl and ilvl > 0 then
+            return math.floor(ilvl)
+        end
+    end
+    
+    -- Fallback: manual calculation (less reliable, but works in some cases)
+    -- Only use slots that are commonly equipped to avoid weird values
     local total, count = 0, 0
-    for i = 1, 18 do
-        if i ~= 4 then -- Skip shirt
-            local itemLink = GetInventoryItemLink(unit, i)
-            if itemLink then
-                local itemLevel = GetDetailedItemLevelInfo(itemLink)
-                if itemLevel and itemLevel > 0 then
-                    total = total + itemLevel
-                    count = count + 1
-                end
+    local slots = {1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17} -- Exclude shirt(4) and tabard(19)
+    
+    for _, slotId in ipairs(slots) do
+        local itemLink = GetInventoryItemLink(unit, slotId)
+        if itemLink then
+            local itemLevel = GetDetailedItemLevelInfo(itemLink)
+            if itemLevel and itemLevel > 0 and itemLevel < 1000 then -- Sanity check
+                total = total + itemLevel
+                count = count + 1
             end
         end
     end
     
-    return count > 0 and math.floor(total / count) or nil
+    -- Only return if we have a reasonable number of items (at least 8)
+    if count >= 8 then
+        return math.floor(total / count)
+    end
+    
+    return nil
 end
 
 -- ========================================
@@ -303,7 +319,9 @@ function ItemLevelInspector:GetItemLevel(unit)
     
     -- Try to read inspection data if it's already loaded (don't request)
     local ilvl = Utils.GetUnitItemLevel(unit)
-    if ilvl and ilvl > 0 then
+    
+    -- Sanity check: item level should be reasonable (between 1 and 300 for current retail)
+    if ilvl and ilvl > 0 and ilvl < 300 then
         self.cache[guid] = {ilvl = ilvl, time = GetTime()}
         return ilvl
     end
@@ -319,7 +337,8 @@ function ItemLevelInspector:Initialize()
         local unit = Utils.FindUnitByGUID(guid)
         if unit then
             local ilvl = Utils.GetUnitItemLevel(unit)
-            if ilvl and ilvl > 0 then
+            -- Sanity check: item level should be reasonable (between 1 and 300 for current retail)
+            if ilvl and ilvl > 0 and ilvl < 300 then
                 ItemLevelInspector.cache[guid] = {ilvl = ilvl, time = GetTime()}
             end
         end
