@@ -493,61 +493,71 @@ function TooltipHandler.AddTargetInfo(tooltip, data)
     if not data or not data.guid then return end
     if not SettingsManager:Get("enableTooltips") then return end
     
-    -- Try cache first
-    local cached = Cache:Get(data.guid)
-    if cached then
-        TooltipRenderer.ApplyTooltip(tooltip, cached.ilvlText, cached.targetText, cached.targeterLines)
-        return
-    end
-    
-    -- Find unit
-    local unit = Utils.FindUnitByGUID(data.guid)
-    if not unit or not UnitExists(unit) then return end
-    
-    -- Build tooltip data
-    local ilvlText = ""
-    local targetText = ""
-    local targeterLines = {}
-    
-    -- Get item level (only for players)
-    if UnitIsPlayer(unit) then
-        local ilvl = ItemLevelInspector:GetItemLevel(unit)
-        if ilvl then
-            ilvlText = TooltipRenderer.RenderItemLevel(ilvl)
+    -- Wrap everything in pcall to prevent taint from spreading
+    local success = pcall(function()
+        -- Try cache first
+        local cached = Cache:Get(data.guid)
+        if cached then
+            TooltipRenderer.ApplyTooltip(tooltip, cached.ilvlText, cached.targetText, cached.targeterLines)
+            return
         end
-    end
+        
+        -- Find unit
+        local unit = Utils.FindUnitByGUID(data.guid)
+        if not unit or not UnitExists(unit) then return end
+        
+        -- Build tooltip data
+        local ilvlText = ""
+        local targetText = ""
+        local targeterLines = {}
+        
+        -- Get item level (only for players)
+        if UnitIsPlayer(unit) then
+            local ilvl = ItemLevelInspector:GetItemLevel(unit)
+            if ilvl then
+                ilvlText = TooltipRenderer.RenderItemLevel(ilvl)
+            end
+        end
+        
+        -- Who is this unit targeting?
+        local targetUnit = unit .. "target"
+        if UnitExists(targetUnit) then
+            targetText = TooltipRenderer.RenderTargetLine(targetUnit)
+        end
+        
+        -- Who is targeting this unit?
+        local targeters = TargetingScanner.GetUnitsTargeting(unit)
+        if #targeters > 0 then
+            targeterLines = TooltipRenderer.RenderTargetersList(targeters)
+        end
+        
+        -- Only cache if we have item level data (for players) or if it's not a player
+        -- This prevents caching "no ilvl" results that might load later
+        local shouldCache = not UnitIsPlayer(unit) or (ilvlText and ilvlText ~= "")
     
-    -- Who is this unit targeting?
-    local targetUnit = unit .. "target"
-    if UnitExists(targetUnit) then
-        targetText = TooltipRenderer.RenderTargetLine(targetUnit)
-    end
+        if shouldCache then
+            Cache:Set(data.guid, {
+                ilvlText = ilvlText,
+                targetText = targetText,
+                targeterLines = targeterLines
+            })
+        end
+        
+        TooltipRenderer.ApplyTooltip(tooltip, ilvlText, targetText, targeterLines)
+    end)
     
-    -- Who is targeting this unit?
-    local targeters = TargetingScanner.GetUnitsTargeting(unit)
-    if #targeters > 0 then
-        targeterLines = TooltipRenderer.RenderTargetersList(targeters)
-    end
-    
-    -- Only cache if we have item level data (for players) or if it's not a player
-    -- This prevents caching "no ilvl" results that might load later
-    local shouldCache = not UnitIsPlayer(unit) or (ilvlText and ilvlText ~= "")
-    
-    if shouldCache then
-        Cache:Set(data.guid, {
-            ilvlText = ilvlText,
-            targetText = targetText,
-            targeterLines = targeterLines
-        })
-    end
-    
-    TooltipRenderer.ApplyTooltip(tooltip, ilvlText, targetText, targeterLines)
+    -- If pcall failed, silently ignore to prevent taint issues
+    if not success then return end
 end
 
 function TooltipHandler.Initialize()
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip, data)
-        if tooltip == GameTooltip then
-            TooltipHandler.AddTargetInfo(tooltip, data)
+        -- Only process if it's the GameTooltip and we have valid unit data
+        if tooltip == GameTooltip and data and data.guid then
+            -- Additional safety: only proceed if data looks like a unit (not an item)
+            if data.type == Enum.TooltipDataType.Unit then
+                TooltipHandler.AddTargetInfo(tooltip, data)
+            end
         end
     end)
 end
