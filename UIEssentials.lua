@@ -122,13 +122,11 @@ function Cache:Clean()
 end
 
 function Cache:StartCleanupTimer()
-    local frame = CreateFrame("Frame")
-    frame:SetScript("OnUpdate", function(self, elapsed)
-        self.timeSinceLastCleanup = (self.timeSinceLastCleanup or 0) + elapsed
-        
-        if self.timeSinceLastCleanup >= CONSTANTS.CACHE_CLEANUP_INTERVAL then
+    -- Use C_Timer instead of OnUpdate for better performance
+    C_Timer.NewTicker(CONSTANTS.CACHE_CLEANUP_INTERVAL, function()
+        -- Don't clean cache during combat for better performance
+        if not InCombatLockdown() then
             Cache:Clean()
-            self.timeSinceLastCleanup = 0
         end
     end)
 end
@@ -485,22 +483,26 @@ function TooltipRenderer.RenderItemLevel(ilvl)
 end
 
 function TooltipRenderer.ApplyTooltip(tooltip, ilvlText, targetText, targeterLines)
+    -- Don't modify tooltips during combat or secure operations to prevent taint
+    if InCombatLockdown() then return end
+    
+    -- Safely add lines with individual pcall protection
     if ilvlText and ilvlText ~= "" then
-        tooltip:AddLine(ilvlText)
+        pcall(function() tooltip:AddLine(ilvlText) end)
     end
     
     if targetText and targetText ~= "" then
-        tooltip:AddLine(targetText)
+        pcall(function() tooltip:AddLine(targetText) end)
     end
     
     if targeterLines and #targeterLines > 0 then
-        tooltip:AddLine(" ")
+        pcall(function() tooltip:AddLine(" ") end)
         for _, line in ipairs(targeterLines) do
-            tooltip:AddLine(line)
+            pcall(function() tooltip:AddLine(line) end)
         end
     end
     
-    tooltip:Show()
+    -- Don't call Show() - let the game handle tooltip visibility
 end
 
 -- ========================================
@@ -511,6 +513,19 @@ local TooltipHandler = {}
 function TooltipHandler.AddTargetInfo(tooltip, data)
     if not data or not data.guid then return end
     if not SettingsManager:Get("enableTooltips") then return end
+    
+    -- Don't modify tooltips during combat
+    if InCombatLockdown() then return end
+    
+    -- Check if the tooltip owner is a secure frame
+    local owner = tooltip:GetOwner()
+    if owner then
+        local success, isProtected = pcall(function() return owner:IsProtected() end)
+        if success and isProtected then
+            -- Don't modify tooltips for secure/protected frames (action bars, etc)
+            return
+        end
+    end
     
     -- Wrap everything in pcall to prevent taint from spreading
     local success = pcall(function()
@@ -571,11 +586,16 @@ end
 
 function TooltipHandler.Initialize()
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip, data)
+        -- Don't process during combat to avoid taint issues
+        if InCombatLockdown() then return end
+        
         -- Only process if it's the GameTooltip and we have valid unit data
         if tooltip == GameTooltip and data and data.guid then
             -- Additional safety: only proceed if data looks like a unit (not an item)
             if data.type == Enum.TooltipDataType.Unit then
-                TooltipHandler.AddTargetInfo(tooltip, data)
+                -- Final safety check: make sure the tooltip isn't being used in a protected context
+                -- by wrapping the entire call in pcall
+                pcall(TooltipHandler.AddTargetInfo, tooltip, data)
             end
         end
     end)
@@ -959,6 +979,16 @@ function CursorHighlight.StartTrackingSquare()
     
     frame:Show()
     frame:SetScript("OnUpdate", function(self)
+        -- Hide during combat for performance
+        if InCombatLockdown() then
+            self:Hide()
+            return
+        end
+        
+        if not self:IsShown() then
+            self:Show()
+        end
+        
         local x, y = GetCursorPosition()
         x, y = x / cachedScale, y / cachedScale
         if x ~= self.lastX or y ~= self.lastY then
@@ -1008,6 +1038,15 @@ function CursorHighlight.StartTrackingStarSurge()
     modelFrame:SetAlpha(0) -- Start invisible
     
     modelFrame:SetScript("OnUpdate", function(self)
+        -- Hide during combat for performance
+        if InCombatLockdown() then
+            if self:GetAlpha() > 0 then
+                self:SetAlpha(0)
+                isMoving = false
+            end
+            return
+        end
+        
         local x, y = GetCursorPosition()
         x, y = x / cachedScale, y / cachedScale
         
