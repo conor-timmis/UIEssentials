@@ -187,8 +187,11 @@ function Utils.GetUnitColor(unit)
 end
 
 function Utils.FindUnitByGUID(guid)
+    if not guid then return nil end
+    
     -- Helper function to safely compare GUIDs (handles tainted values)
     local function compareGUID(unitToken)
+        if not UnitExists(unitToken) then return false end
         local success, isMatch = pcall(function()
             return UnitGUID(unitToken) == guid
         end)
@@ -203,9 +206,11 @@ function Utils.FindUnitByGUID(guid)
         end
     end
     
-    -- Check party members
-    if IsInGroup() then
-        for i = 1, CONSTANTS.MAX_PARTY_MEMBERS do
+    -- Check party members (limit to actual party size)
+    if IsInGroup() and not IsInRaid() then
+        local numPartyMembers = GetNumGroupMembers()
+        local maxParty = math.min(numPartyMembers > 0 and numPartyMembers or CONSTANTS.MAX_PARTY_MEMBERS, CONSTANTS.MAX_PARTY_MEMBERS)
+        for i = 1, maxParty do
             local partyUnit = "party" .. i
             if compareGUID(partyUnit) then
                 return partyUnit
@@ -213,9 +218,11 @@ function Utils.FindUnitByGUID(guid)
         end
     end
     
-    -- Check raid members
+    -- Check raid members (limit to actual raid size)
     if IsInRaid() then
-        for i = 1, CONSTANTS.MAX_RAID_MEMBERS do
+        local numRaidMembers = GetNumGroupMembers()
+        local maxRaid = math.min(numRaidMembers > 0 and numRaidMembers or CONSTANTS.MAX_RAID_MEMBERS, CONSTANTS.MAX_RAID_MEMBERS)
+        for i = 1, maxRaid do
             local raidUnit = "raid" .. i
             if compareGUID(raidUnit) then
                 return raidUnit
@@ -223,11 +230,15 @@ function Utils.FindUnitByGUID(guid)
         end
     end
     
-    -- Check nameplates
-    for i = 1, CONSTANTS.MAX_NAMEPLATES do
-        local nameplateUnit = "nameplate" .. i
-        if compareGUID(nameplateUnit) then
-            return nameplateUnit
+    -- Check nameplates (only scan visible ones)
+    local numNameplates = C_NamePlate and C_NamePlate.GetNumNamePlates() or 0
+    if numNameplates > 0 then
+        local maxNameplates = math.min(numNameplates, CONSTANTS.MAX_NAMEPLATES)
+        for i = 1, maxNameplates do
+            local nameplateUnit = "nameplate" .. i
+            if compareGUID(nameplateUnit) then
+                return nameplateUnit
+            end
         end
     end
     
@@ -318,6 +329,16 @@ function ItemLevelInspector:GetItemLevel(unit)
     -- Try to read inspection data if it's already loaded (don't request)
     local ilvl = Utils.GetUnitItemLevel(unit)
     
+    -- If we don't have ilvl and can inspect, request inspection
+    if not ilvl or ilvl == 0 then
+        local canInspect = CanInspect(unit)
+        local inRange = CheckInteractDistance(unit, 1)
+        if canInspect and inRange then
+            -- Request inspection - it will be cached when INSPECT_READY fires
+            NotifyInspect(unit)
+        end
+    end
+    
     -- Sanity check: item level should be reasonable (between 1 and 300 for current retail)
     if ilvl and ilvl > 0 and ilvl < 300 then
         self.cache[guid] = {ilvl = ilvl, time = GetTime()}
@@ -398,6 +419,11 @@ function TargetingScanner.ScanUnits(prefix, count, targetUnit, targeters, checkD
 end
 
 function TargetingScanner.GetUnitsTargeting(targetUnit)
+    -- Early return if target unit doesn't exist
+    if not targetUnit or not UnitExists(targetUnit) then
+        return {}
+    end
+    
     local targeters = {}
     
     -- Check player first
@@ -414,14 +440,21 @@ function TargetingScanner.GetUnitsTargeting(targetUnit)
         TargetingScanner.ScanUnits("party", CONSTANTS.MAX_PARTY_MEMBERS, targetUnit, targeters, checkDuplicates)
     end
     
-    -- Check raid
+    -- Check raid (limit to actual raid size for better performance)
     if IsInRaid() then
-        TargetingScanner.ScanUnits("raid", CONSTANTS.MAX_RAID_MEMBERS, targetUnit, targeters, checkDuplicates)
+        local numRaidMembers = GetNumGroupMembers()
+        local maxToScan = math.min(numRaidMembers > 0 and numRaidMembers or CONSTANTS.MAX_RAID_MEMBERS, CONSTANTS.MAX_RAID_MEMBERS)
+        TargetingScanner.ScanUnits("raid", maxToScan, targetUnit, targeters, checkDuplicates)
     end
     
-    -- Check nameplates (skip in raids for performance)
+    -- Check nameplates (skip in raids for performance, and limit scan)
     if not IsInRaid() then
-        TargetingScanner.ScanUnits("nameplate", CONSTANTS.MAX_NAMEPLATES, targetUnit, targeters, checkDuplicates)
+        -- Only scan visible nameplates (typically much less than 40)
+        local numNameplates = C_NamePlate and C_NamePlate.GetNumNamePlates() or 0
+        if numNameplates > 0 then
+            local maxNameplates = math.min(numNameplates, CONSTANTS.MAX_NAMEPLATES)
+            TargetingScanner.ScanUnits("nameplate", maxNameplates, targetUnit, targeters, checkDuplicates)
+        end
     end
     
     return targeters
@@ -483,10 +516,8 @@ function TooltipRenderer.RenderItemLevel(ilvl)
 end
 
 function TooltipRenderer.ApplyTooltip(tooltip, ilvlText, targetText, targeterLines)
-    -- Don't modify tooltips during combat or secure operations to prevent taint
-    if InCombatLockdown() then return end
-    
     -- Safely add lines with individual pcall protection
+    -- Note: TooltipDataProcessor callbacks should be safe to modify tooltips
     if ilvlText and ilvlText ~= "" then
         pcall(function() tooltip:AddLine(ilvlText) end)
     end
@@ -514,19 +545,6 @@ function TooltipHandler.AddTargetInfo(tooltip, data)
     if not data or not data.guid then return end
     if not SettingsManager:Get("enableTooltips") then return end
     
-    -- Don't modify tooltips during combat
-    if InCombatLockdown() then return end
-    
-    -- Check if the tooltip owner is a secure frame
-    local owner = tooltip:GetOwner()
-    if owner then
-        local success, isProtected = pcall(function() return owner:IsProtected() end)
-        if success and isProtected then
-            -- Don't modify tooltips for secure/protected frames (action bars, etc)
-            return
-        end
-    end
-    
     -- Wrap everything in pcall to prevent taint from spreading
     local success = pcall(function()
         -- Try cache first
@@ -553,29 +571,33 @@ function TooltipHandler.AddTargetInfo(tooltip, data)
             end
         end
         
-        -- Who is this unit targeting?
+        -- Who is this unit targeting? (only check if unit exists to avoid unnecessary work)
+        -- Try to get target info, but handle cases where it might be blocked
         local targetUnit = unit .. "target"
-        if UnitExists(targetUnit) then
-            targetText = TooltipRenderer.RenderTargetLine(targetUnit)
+        local targetSuccess, targetExists = pcall(function() return UnitExists(targetUnit) end)
+        if targetSuccess and targetExists then
+            local renderSuccess, renderResult = pcall(function() return TooltipRenderer.RenderTargetLine(targetUnit) end)
+            if renderSuccess and renderResult then
+                targetText = renderResult
+            end
         end
         
-        -- Who is targeting this unit?
-        local targeters = TargetingScanner.GetUnitsTargeting(unit)
-        if #targeters > 0 then
-            targeterLines = TooltipRenderer.RenderTargetersList(targeters)
+        -- Who is targeting this unit? (only scan if we're not in a large raid for performance)
+        -- Skip targeting scan in large raids (20+ members) as it's expensive and less useful
+        local numRaidMembers = IsInRaid() and GetNumGroupMembers() or 0
+        if numRaidMembers < 20 then
+            local scanSuccess, targeters = pcall(function() return TargetingScanner.GetUnitsTargeting(unit) end)
+            if scanSuccess and targeters and #targeters > 0 then
+                targeterLines = TooltipRenderer.RenderTargetersList(targeters)
+            end
         end
         
-        -- Only cache if we have item level data (for players) or if it's not a player
-        -- This prevents caching "no ilvl" results that might load later
-        local shouldCache = not UnitIsPlayer(unit) or (ilvlText and ilvlText ~= "")
-    
-        if shouldCache then
-            Cache:Set(data.guid, {
-                ilvlText = ilvlText,
-                targetText = targetText,
-                targeterLines = targeterLines
-            })
-        end
+        -- Cache the results (including empty results to avoid repeated lookups)
+        Cache:Set(data.guid, {
+            ilvlText = ilvlText,
+            targetText = targetText,
+            targeterLines = targeterLines
+        })
         
         TooltipRenderer.ApplyTooltip(tooltip, ilvlText, targetText, targeterLines)
     end)
@@ -585,19 +607,35 @@ function TooltipHandler.AddTargetInfo(tooltip, data)
 end
 
 function TooltipHandler.Initialize()
+    -- Use both TooltipDataProcessor and GameTooltip hook for better compatibility
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip, data)
-        -- Don't process during combat to avoid taint issues
-        if InCombatLockdown() then return end
-        
         -- Only process if it's the GameTooltip and we have valid unit data
         if tooltip == GameTooltip and data and data.guid then
             -- Additional safety: only proceed if data looks like a unit (not an item)
             if data.type == Enum.TooltipDataType.Unit then
-                -- Final safety check: make sure the tooltip isn't being used in a protected context
-                -- by wrapping the entire call in pcall
+                -- Wrap in pcall to handle any taint issues gracefully
                 pcall(TooltipHandler.AddTargetInfo, tooltip, data)
             end
         end
+    end)
+    
+    -- Also hook GameTooltip:SetUnit as a fallback for when TooltipDataProcessor doesn't fire
+    hooksecurefunc(GameTooltip, "SetUnit", function(self, unit)
+        if not unit or not UnitExists(unit) then return end
+        if not SettingsManager:Get("enableTooltips") then return end
+        
+        -- Get GUID from unit
+        local guid = UnitGUID(unit)
+        if not guid then return end
+        
+        -- Use a small delay to ensure tooltip is fully populated
+        C_Timer.After(0.01, function()
+            if GameTooltip:IsShown() and UnitGUID(unit) == guid then
+                pcall(function()
+                    TooltipHandler.AddTargetInfo(GameTooltip, {guid = guid, type = Enum.TooltipDataType.Unit})
+                end)
+            end
+        end)
     end)
 end
 
@@ -976,14 +1014,22 @@ function CursorHighlight.StartTrackingSquare()
     local frame = CursorHighlight.frame
     local uiParent = UIParent
     local cachedScale = frame.cachedScale
+    local updateThrottle = 0
     
     frame:Show()
-    frame:SetScript("OnUpdate", function(self)
+    frame:SetScript("OnUpdate", function(self, elapsed)
         -- Hide during combat for performance
         if InCombatLockdown() then
             self:Hide()
             return
         end
+        
+        -- Throttle updates: only update every 2 frames (30fps instead of 60fps)
+        updateThrottle = updateThrottle + 1
+        if updateThrottle < 2 then
+            return
+        end
+        updateThrottle = 0
         
         if not self:IsShown() then
             self:Show()
@@ -1037,7 +1083,8 @@ function CursorHighlight.StartTrackingStarSurge()
     modelFrame:Show()
     modelFrame:SetAlpha(0) -- Start invisible
     
-    modelFrame:SetScript("OnUpdate", function(self)
+    local updateThrottle = 0  -- Throttle updates to every 3 frames for better performance
+    modelFrame:SetScript("OnUpdate", function(self, elapsed)
         -- Hide during combat for performance
         if InCombatLockdown() then
             if self:GetAlpha() > 0 then
@@ -1046,6 +1093,13 @@ function CursorHighlight.StartTrackingStarSurge()
             end
             return
         end
+        
+        -- Throttle updates: only update every 3 frames (~20fps) for expensive model transforms
+        updateThrottle = updateThrottle + 1
+        if updateThrottle < 3 then
+            return
+        end
+        updateThrottle = 0
         
         local x, y = GetCursorPosition()
         x, y = x / cachedScale, y / cachedScale
@@ -1056,19 +1110,20 @@ function CursorHighlight.StartTrackingStarSurge()
             return
         end
         
-        -- Always update position
-        local offsetX = x + STAR_SURGE_OFFSET_X
-        local offsetY = y + STAR_SURGE_OFFSET_Y
-        posVector:SetXYZ(offsetX / screenHypotenuse, offsetY / screenHypotenuse, 0)
-        modelFrame:SetTransform(posVector, rotVector, STAR_SURGE_SCALE)
-        
         -- Check if cursor moved (with threshold to avoid tiny movements)
         local dx = x - lastX
         local dy = y - lastY
         local distanceSq = dx * dx + dy * dy
         local moved = distanceSq > (STAR_SURGE_MOVEMENT_THRESHOLD * STAR_SURGE_MOVEMENT_THRESHOLD)
         
+        -- Only update transform if cursor moved significantly
         if moved then
+            -- Always update position when moving
+            local offsetX = x + STAR_SURGE_OFFSET_X
+            local offsetY = y + STAR_SURGE_OFFSET_Y
+            posVector:SetXYZ(offsetX / screenHypotenuse, offsetY / screenHypotenuse, 0)
+            modelFrame:SetTransform(posVector, rotVector, STAR_SURGE_SCALE)
+            
             -- Cursor is moving - show the trail
             if not isMoving then
                 modelFrame:SetAlpha(STAR_SURGE_ALPHA)
