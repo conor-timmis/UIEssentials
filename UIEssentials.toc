@@ -1,8 +1,8 @@
 ## Interface: 120000
 ## Title: UIEssentials
-## Notes: Essential UI enhancements including targeting info in tooltips, item level decimals, realm name removal, and cursor highlight.
+## Notes: Essential UI enhancements including targeting info in tooltips, item level decimals, realm name removal, cursor highlight, and cooldown colorization.
 ## Author: Conor Timmis
-## Version: 2.4
+## Version: 2.5
 ## IconTexture: Interface\TargetingFrame\UI-RaidTargetingIcon_1
 ## SavedVariables: UIEssentials
 
