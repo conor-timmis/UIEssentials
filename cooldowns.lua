@@ -64,6 +64,7 @@ local function IsCooldownVisible(cooldownFrame)
 end
 
 local lastColorCache = {}
+local lastTextCache = {}
 
 local function ApplyCooldownColor(cooldownText, button, force)
     if not cooldownText or cooldownText:IsForbidden() then return end
@@ -74,6 +75,7 @@ local function ApplyCooldownColor(cooldownText, button, force)
         if lastColor ~= "white" or force then
             SetTextColorSafe(cooldownText, 1.0, 1.0, 1.0)
             lastColorCache[cooldownText] = "white"
+            lastTextCache[cooldownText] = nil
         end
         return
     end
@@ -87,6 +89,12 @@ local function ApplyCooldownColor(cooldownText, button, force)
     
     local textStr = CleanText(text)
     if not textStr then return end
+    
+    local lastText = lastTextCache[cooldownText]
+    if not force and lastText == textStr then
+        return
+    end
+    lastTextCache[cooldownText] = textStr
     
     local seconds = ParseCooldownTime(textStr)
     if not seconds then return end
@@ -283,80 +291,27 @@ local function HookButtonCooldown(button, forceRecheck)
             local button = CooldownColor.cooldownTexts[self]
             if button then 
 
+                lastTextCache[self] = nil
                 ApplyCooldownColor(self, button, true)
-                ScheduleColorUpdate(button, 0.05)
             end
         end)
         cooldownText._cooldownColorHooked = true
     end
     
     if button.cooldown and not button.cooldown._cooldownColorHooked then
-
-        if not button.cooldown._cooldownColorUpdateHooked then
-            local updateFrame = CreateFrame("Frame")
-            updateFrame:SetParent(button.cooldown)
-            updateFrame:Hide()
-            local updateTimer = 0
-            local recheckTimer = 0
-            updateFrame:SetScript("OnUpdate", function(self, elapsed)
-                if not button.cooldown or not button.cooldown:IsShown() or 
-                   button.cooldown:GetAlpha() < 0.3 then
-                    self:Hide()
-                    return
-                end
-                
-                updateTimer = updateTimer + elapsed
-                recheckTimer = recheckTimer + elapsed
-                
-
-                if recheckTimer >= 0.5 then
-                    recheckTimer = 0
-                    local currentText = CooldownColor.hookedButtons[button]
-                    if not currentText or currentText:IsForbidden() then
-
-                        HookButtonCooldown(button, true)
-                    else
-                        local textContent = GetTextSafe(currentText)
-                        if not textContent or not CleanText(textContent) then
-
-                            HookButtonCooldown(button, true)
-                        end
-                    end
-                end
-                
-
-                if updateTimer >= 0.1 then
-                    updateTimer = 0
-                    local text = CooldownColor.hookedButtons[button]
-                    if text and not text:IsForbidden() then
-                        ApplyCooldownColor(text, button, false)
-                    end
-                end
-            end)
-            button.cooldown._cooldownColorUpdateFrame = updateFrame
-            button.cooldown._cooldownColorUpdateHooked = true
-        end
-        
         button.cooldown:HookScript("OnShow", function()
-            -- Always recheck when cooldown shows - text might be new
-            C_Timer.After(0.05, function()
+
+            C_Timer.After(0.1, function()
                 if button and not button:IsForbidden() and button.cooldown and button.cooldown:IsShown() then
                     HookButtonCooldown(button, true)
                     local text = CooldownColor.hookedButtons[button]
                     if text and not text:IsForbidden() then
-                        if button.cooldown._cooldownColorUpdateFrame then
-                            button.cooldown._cooldownColorUpdateFrame:Show()
-                        end
                         ApplyCooldownColor(text, button, true)
-                        ScheduleColorUpdate(button, 0.01)
                     end
                 end
             end)
         end)
         button.cooldown:HookScript("OnHide", function()
-            if button.cooldown._cooldownColorUpdateFrame then
-                button.cooldown._cooldownColorUpdateFrame:Hide()
-            end
             if cooldownText and not cooldownText:IsForbidden() then
                 local text = GetTextSafe(cooldownText)
                 local textStr = CleanText(text)
@@ -364,6 +319,7 @@ local function HookButtonCooldown(button, forceRecheck)
                 if not seconds then
                     SetTextColorSafe(cooldownText, 1.0, 1.0, 1.0)
                     lastColorCache[cooldownText] = "white"
+                    lastTextCache[cooldownText] = nil
                 end
             end
         end)
@@ -372,7 +328,7 @@ local function HookButtonCooldown(button, forceRecheck)
     
     CooldownColor.hookedButtons[button] = cooldownText
     if button.cooldown and button.cooldown:IsShown() then
-        ScheduleColorUpdate(button, 0.01)
+        ApplyCooldownColor(cooldownText, button, true)
     end
 end
 
@@ -397,9 +353,12 @@ local function HookActionButtonSystem()
     if ActionButton_UpdateCooldown then
         hooksecurefunc("ActionButton_UpdateCooldown", function(button)
             if button then
-
                 HookButtonCooldown(button, true)
-                ScheduleColorUpdate(button)
+
+                local text = CooldownColor.hookedButtons[button]
+                if text and not text:IsForbidden() then
+                    ApplyCooldownColor(text, button, true)
+                end
             end
         end)
     end
@@ -416,9 +375,12 @@ local function HookActionButtonSystem()
         hooksecurefunc("CooldownFrame_SetTimer", function(cooldownFrame, start, duration)
             if cooldownFrame and cooldownFrame:GetParent() then
                 local button = cooldownFrame:GetParent()
-
                 HookButtonCooldown(button, true)
-                ScheduleColorUpdate(button)
+
+                local text = CooldownColor.hookedButtons[button]
+                if text and not text:IsForbidden() then
+                    ApplyCooldownColor(text, button, true)
+                end
             end
         end)
     end
@@ -426,16 +388,17 @@ end
 
 local function StartButtonScanner()
     local scanFrame = CreateFrame("Frame")
-    local scanCount, updateCount, cleanupCount = 0, 0, 0
+    local scanCount, updateCount, cleanupCount, recheckCount = 0, 0, 0, 0
     local sampleCounter = 0
     
-    local validEntries = {}
-    
+
     scanFrame:SetScript("OnUpdate", function(self, elapsed)
         scanCount = scanCount + elapsed
         updateCount = updateCount + elapsed
         cleanupCount = cleanupCount + elapsed
+        recheckCount = recheckCount + elapsed
         
+
         if cleanupCount >= 15.0 then
             cleanupCount = 0
             CleanupInvalidEntries()
@@ -448,10 +411,12 @@ local function StartButtonScanner()
                 if not cooldownText or cooldownText:IsForbidden() or 
                    not CooldownColor.cooldownTexts[cooldownText] then
                     lastColorCache[cooldownText] = nil
+                    lastTextCache[cooldownText] = nil
                 end
             end
         end
         
+
         if scanCount >= 15.0 then
             scanCount = 0
             HookButtonsByPattern("ActionButton", 96)
@@ -463,11 +428,12 @@ local function StartButtonScanner()
             HookButtonsByPattern("StanceButton", 10)
         end
         
-        if updateCount >= 0.1 then
+
+        if updateCount >= 0.3 then
             updateCount = 0
             
             local count = 0
-            local maxEntries = 120
+            local maxEntries = 80
             for cooldownText, button in pairs(CooldownColor.cooldownTexts) do
                 if count >= maxEntries then break end
                 if cooldownText and not cooldownText:IsForbidden() and
@@ -478,25 +444,27 @@ local function StartButtonScanner()
                     ApplyCooldownColor(cooldownText, button, false)
                 elseif cooldownText and not cooldownText:IsForbidden() and
                        button and not button:IsForbidden() then
-                    if not button.cooldown or not button.cooldown:IsShown() or button.cooldown:GetAlpha() < 0.3 then
-
-                    end
                 else
                     CooldownColor.cooldownTexts[cooldownText] = nil
                 end
             end
+        end
+        
 
-
+        if recheckCount >= 1.0 then
+            recheckCount = 0
+            
             sampleCounter = sampleCounter + 1
-            local sampleOffset = (sampleCounter * 12) % 96
-            for i = 1, 12 do
+            local sampleOffset = (sampleCounter * 8) % 96 
+            for i = 1, 8 do
                 local idx = ((sampleOffset + i - 1) % 96) + 1
                 local button = _G["ActionButton" .. idx]
                 if button and not button:IsForbidden() and
                    button.cooldown and button.cooldown:IsShown() and
                    button.cooldown:GetAlpha() > 0.3 then
-
-                    HookButtonCooldown(button, true)
+                    if not CooldownColor.hookedButtons[button] then
+                        HookButtonCooldown(button, true)
+                    end
                 end
             end
         end
