@@ -540,10 +540,26 @@ end
 -- TOOLTIP HANDLER MODULE
 -- ========================================
 local TooltipHandler = {}
+TooltipHandler.lastProcessed = {} -- Track last processed GUID and time to prevent duplicates
 
 function TooltipHandler.AddTargetInfo(tooltip, data)
     if not data or not data.guid then return end
     if not SettingsManager:Get("enableTooltips") then return end
+    
+    -- Prevent duplicate processing: if we just processed this GUID within 0.1 seconds, skip
+    local currentTime = GetTime()
+    local lastProcessed = TooltipHandler.lastProcessed[data.guid]
+    if lastProcessed and (currentTime - lastProcessed) < 0.1 then
+        return
+    end
+    TooltipHandler.lastProcessed[data.guid] = currentTime
+    
+    -- Clean up old entries (older than 1 second) to prevent memory growth
+    for guid, timestamp in pairs(TooltipHandler.lastProcessed) do
+        if (currentTime - timestamp) > 1.0 then
+            TooltipHandler.lastProcessed[guid] = nil
+        end
+    end
     
     -- Wrap everything in pcall to prevent taint from spreading
     local success = pcall(function()
