@@ -151,8 +151,9 @@ local function FindCooldownText(button)
     
     local regions = {cooldownFrame:GetRegions()}
     local candidateFontString = nil
+    local bestMatch = nil
     
-    local maxRegions = math.min(#regions, 10)
+    local maxRegions = math.min(#regions, 20)
     for i = 1, maxRegions do
         local region = regions[i]
         if region and not region:IsForbidden() and region.GetObjectType and
@@ -171,8 +172,21 @@ local function FindCooldownText(button)
             end
         end
     end
+
+    if candidateFontString then
+        return candidateFontString
+    end
     
-    return candidateFontString
+    local children = {cooldownFrame:GetChildren()}
+    for i = 1, math.min(#children, 10) do
+        local child = children[i]
+        if child and not child:IsForbidden() and child.GetObjectType and
+           child:GetObjectType() == "FontString" then
+            return child
+        end
+    end
+    
+    return nil
 end
 
 local function CleanupInvalidEntries()
@@ -228,7 +242,26 @@ local function HookButtonCooldown(button)
     end
     
     local cooldownText = FindCooldownText(button)
-    if not cooldownText or cooldownText:IsForbidden() then return end
+    
+    if not cooldownText or cooldownText:IsForbidden() then
+        if button.cooldown and not button.cooldown._cooldownColorRetryHooked then
+            button.cooldown:HookScript("OnShow", function()
+                C_Timer.After(0.05, function()
+                    if button and not button:IsForbidden() then
+                        local newCooldownText = FindCooldownText(button)
+                        if newCooldownText and not newCooldownText:IsForbidden() then
+                            -- Found it now, hook it properly
+                            if not CooldownColor.hookedButtons[button] then
+                                HookButtonCooldown(button)
+                            end
+                        end
+                    end
+                end)
+            end)
+            button.cooldown._cooldownColorRetryHooked = true
+        end
+        return
+    end
     
     local existingButton = CooldownColor.cooldownTexts[cooldownText]
     if existingButton then
@@ -265,6 +298,18 @@ local function HookButtonCooldown(button)
         button.cooldown:HookScript("OnShow", function()
             if cooldownText and not cooldownText:IsForbidden() then
                 ScheduleColorUpdate(button, 0.01)
+            else
+                C_Timer.After(0.05, function()
+                    if button and not button:IsForbidden() then
+                        local newCooldownText = FindCooldownText(button)
+                        if newCooldownText and not newCooldownText:IsForbidden() then
+                            if not CooldownColor.hookedButtons[button] or 
+                               CooldownColor.hookedButtons[button] ~= newCooldownText then
+                                HookButtonCooldown(button)
+                            end
+                        end
+                    end
+                end)
             end
         end)
         button.cooldown:HookScript("OnHide", function()
@@ -281,6 +326,9 @@ local function HookButtonCooldown(button)
     end
     
     CooldownColor.hookedButtons[button] = cooldownText
+    if button.cooldown and button.cooldown:IsShown() then
+        ScheduleColorUpdate(button, 0.01)
+    end
 end
 
 local function HookButtonsByPattern(pattern, count)
@@ -330,6 +378,7 @@ end
 local function StartButtonScanner()
     local scanFrame = CreateFrame("Frame")
     local scanCount, updateCount, cleanupCount = 0, 0, 0
+    local sampleCounter = 0
     
     local validEntries = {}
     
@@ -388,6 +437,19 @@ local function StartButtonScanner()
             for i = 1, count do
                 if validEntries[i] then
                     ApplyCooldownColor(validEntries[i][1], validEntries[i][2])
+                end
+            end
+            
+            sampleCounter = sampleCounter + 1
+            local sampleOffset = (sampleCounter * 8) % 96
+            for i = 1, 8 do
+                local idx = ((sampleOffset + i - 1) % 96) + 1
+                local button = _G["ActionButton" .. idx]
+                if button and not button:IsForbidden() and 
+                   not CooldownColor.hookedButtons[button] and
+                   button.cooldown and button.cooldown:IsShown() and
+                   button.cooldown:GetAlpha() > 0.3 then
+                    HookButtonCooldown(button)
                 end
             end
         end
