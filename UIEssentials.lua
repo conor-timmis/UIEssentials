@@ -148,10 +148,17 @@ function Utils.FindUnitByGUID(guid)
         local unit = scanUnits("raid", max)
         if unit then return unit end
     end
-    local numNameplates = C_NamePlate and C_NamePlate.GetNumNamePlates() or 0
-    if numNameplates > 0 then
-        local unit = scanUnits("nameplate", math.min(numNameplates, CONSTANTS.MAX_NAMEPLATES))
-        if unit then return unit end
+    if C_NamePlate then
+        local success, numNameplates = pcall(function()
+            if C_NamePlate.GetNumNamePlates then
+                return C_NamePlate.GetNumNamePlates()
+            end
+            return 0
+        end)
+        if success and numNameplates and numNameplates > 0 then
+            local unit = scanUnits("nameplate", math.min(numNameplates, CONSTANTS.MAX_NAMEPLATES))
+            if unit then return unit end
+        end
     end
     return nil
 end
