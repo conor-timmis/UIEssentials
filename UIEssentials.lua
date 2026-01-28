@@ -27,7 +27,8 @@ local CONSTANTS = {
 local DEFAULTS = {
     enableTooltips = true, hideRealmRaid = true, hideRealmParty = true,
     showItemLevelDecimals = true, showCursorHighlight = false,
-    cursorStyle = "square", autoSkipCutscenes = true, disableAutoCompare = true
+    cursorStyle = "square", autoSkipCutscenes = true, disableAutoCompare = true,
+    enableCooldownColors = true
 }
 
 -- ========================================
@@ -762,40 +763,153 @@ local OptionsPanel = {}
 OptionsPanel.frame = nil
 
 -- UI Constants
-local PANEL_WIDTH = 500
-local PANEL_HEIGHT = 350
-local COLUMN_WIDTH = 230
+local PANEL_WIDTH = 520
+local PANEL_HEIGHT = 380
+local COLUMN_WIDTH = 240
 local COLUMN_SPACING = 20
-local BEIGE_BG = {0.85, 0.82, 0.75, 0.95}
-local BEIGE_BORDER = {0.65, 0.60, 0.50, 1.0}
+local MODERN_BG = {0.12, 0.12, 0.14, 0.98}
+local MODERN_BORDER = {0.25, 0.25, 0.28, 1.0}
 
 -- Text Colors
-local COLOR_TITLE = {0.15, 0.10, 0.05, 1.0}
-local COLOR_VERSION = {0.35, 0.28, 0.20, 1.0}
-local COLOR_HEADER = {0.25, 0.18, 0.12, 1.0}
-local COLOR_LABEL = {1.0, 0.85, 0.0, 1.0}
-local COLOR_HINT = {0.45, 0.35, 0.25, 1.0}
+local COLOR_TITLE = {0.95, 0.95, 0.95, 1.0}
+local COLOR_VERSION = {0.7, 0.7, 0.7, 1.0}
+local COLOR_HEADER = {0.85, 0.85, 0.85, 1.0}
+local COLOR_LABEL = {0.9, 0.9, 0.9, 1.0}
+local COLOR_HINT = {0.65, 0.65, 0.65, 1.0}
 
 local function CreateCheckbox(parent, label, tooltip, x, y, getFunc, setFunc)
-    local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+    local check = CreateFrame("CheckButton", nil, parent)
     check:SetPoint("TOPLEFT", x, y)
-    check:SetSize(22, 22)
-    local labelText = check:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    labelText:SetPoint("LEFT", check, "RIGHT", 3, 0)
-    labelText:SetText(label)
-    labelText:SetTextColor(unpack(COLOR_LABEL))
-    check:SetScript("OnClick", function(self) if setFunc then setFunc(self:GetChecked()) end end)
-    if tooltip then
-        check:SetScript("OnEnter", function(self)
+    check:SetSize(20, 20)
+    
+    local bg = check:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.2, 0.2, 0.2, 1.0)
+    check.bg = bg
+    
+    local border = check:CreateTexture(nil, "BORDER")
+    border:SetAllPoints()
+    border:SetColorTexture(0.4, 0.4, 0.4, 1.0)
+    check.border = border
+    
+    local checkmark = check:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    checkmark:SetPoint("CENTER")
+    checkmark:SetText("✓")
+    checkmark:SetTextColor(0.2, 0.8, 0.2, 1.0)
+    checkmark:Hide()
+    check.checkmark = checkmark
+    
+    check:SetScript("OnClick", function(self)
+        local checked = self:GetChecked()
+        if checked then
+            self.bg:SetColorTexture(0.15, 0.3, 0.15, 1.0)
+            self.border:SetColorTexture(0.3, 0.6, 0.3, 1.0)
+            self.checkmark:Show()
+        else
+            self.bg:SetColorTexture(0.2, 0.2, 0.2, 1.0)
+            self.border:SetColorTexture(0.4, 0.4, 0.4, 1.0)
+            self.checkmark:Hide()
+        end
+        if setFunc then setFunc(checked) end
+    end)
+    
+    check:SetScript("OnEnter", function(self)
+        if not self:GetChecked() then
+            self.bg:SetColorTexture(0.25, 0.25, 0.25, 1.0)
+            self.border:SetColorTexture(0.5, 0.5, 0.5, 1.0)
+        end
+        if tooltip then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText(tooltip, nil, nil, nil, nil, true)
             GameTooltip:Show()
-        end)
+        end
+    end)
+    
+    check:SetScript("OnLeave", function(self)
+        if not self:GetChecked() then
+            self.bg:SetColorTexture(0.2, 0.2, 0.2, 1.0)
+            self.border:SetColorTexture(0.4, 0.4, 0.4, 1.0)
+        end
+        GameTooltip:Hide()
+    end)
+    
+    local labelText = check:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    labelText:SetPoint("LEFT", check, "RIGHT", 6, 0)
+    labelText:SetPoint("RIGHT", check:GetParent(), "RIGHT", -8, 0)
+    labelText:SetJustifyH("LEFT")
+    labelText:SetWordWrap(false)
+    labelText:SetNonSpaceWrap(false)
+    labelText:SetText(label)
+    labelText:SetTextColor(unpack(COLOR_LABEL))
+    
+    check.UpdateState = function()
+        local checked = (getFunc and getFunc()) or false
+        check:SetChecked(checked)
+        if checked then
+            check.bg:SetColorTexture(0.15, 0.3, 0.15, 1.0)
+            check.border:SetColorTexture(0.3, 0.6, 0.3, 1.0)
+            check.checkmark:Show()
+        else
+            check.bg:SetColorTexture(0.2, 0.2, 0.2, 1.0)
+            check.border:SetColorTexture(0.4, 0.4, 0.4, 1.0)
+            check.checkmark:Hide()
+        end
     end
-    check:SetScript("OnLeave", GameTooltip.Hide)
-    check.UpdateState = function() check:SetChecked((getFunc and getFunc()) or false) end
     check:UpdateState()
     return check
+end
+
+local function CreateRadioButton(parent, label, tooltip, x, y, value, currentValue, setFunc)
+    local radio = CreateFrame("Button", nil, parent)
+    radio:SetPoint("TOPLEFT", x, y)
+    
+    local isSelected = (value == currentValue)
+    radio.isSelected = isSelected
+    
+    local labelText = radio:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    labelText:SetPoint("LEFT", radio, "LEFT", 0, 0)
+    labelText:SetText(label)
+    radio.labelText = labelText
+    
+    local textWidth = labelText:GetStringWidth()
+    radio:SetSize(textWidth + 10, 18)
+    
+    local function UpdateVisualState()
+        if radio.isSelected then
+            labelText:SetTextColor(0.3, 0.9, 0.3, 1.0)
+        else
+            labelText:SetTextColor(unpack(COLOR_LABEL))
+        end
+    end
+    
+    radio:SetScript("OnClick", function(self)
+        if setFunc then setFunc(value) end
+    end)
+    
+    radio:SetScript("OnEnter", function(self)
+        if not radio.isSelected then
+            labelText:SetTextColor(0.7, 0.7, 0.7, 1.0)
+        end
+        if tooltip then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(tooltip, nil, nil, nil, nil, true)
+            GameTooltip:Show()
+        end
+    end)
+    
+    radio:SetScript("OnLeave", function(self)
+        UpdateVisualState()
+        GameTooltip:Hide()
+    end)
+    
+    UpdateVisualState()
+    
+    radio.UpdateState = function(newCurrentValue)
+        radio.isSelected = (value == newCurrentValue)
+        UpdateVisualState()
+    end
+    
+    return radio
 end
 
 local function CreateSectionHeader(parent, text, x, y)
@@ -811,36 +925,265 @@ local function CreateDropdown(parent, label, tooltip, x, y, options, getFunc, se
     labelText:SetPoint("TOPLEFT", x, y)
     labelText:SetText(label)
     labelText:SetTextColor(unpack(COLOR_LABEL))
-    local dropdown = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
-    dropdown:SetPoint("TOPLEFT", labelText, "BOTTOMLEFT", -15, -5)
-    UIDropDownMenu_SetWidth(dropdown, 150)
-    UIDropDownMenu_SetText(dropdown, options[getFunc()] or options[1])
-    UIDropDownMenu_Initialize(dropdown, function(self, level)
-        local info = UIDropDownMenu_CreateInfo()
-        for value, text in pairs(options) do
-            info.text, info.value = text, value
-            info.func = function()
-                UIDropDownMenu_SetSelectedValue(dropdown, value)
-                UIDropDownMenu_SetText(dropdown, text)
-                if setFunc then setFunc(value) end
+    
+    local dropdown = CreateFrame("Button", nil, parent)
+    dropdown:SetSize(150, 24)
+    dropdown:SetPoint("TOPLEFT", labelText, "BOTTOMLEFT", 0, -5)
+    
+    local bg = dropdown:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.2, 0.2, 0.2, 1.0)
+    dropdown.bg = bg
+    
+    local border = dropdown:CreateTexture(nil, "BORDER")
+    border:SetAllPoints()
+    border:SetColorTexture(0.4, 0.4, 0.4, 1.0)
+    dropdown.border = border
+    
+    local text = dropdown:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    text:SetPoint("LEFT", dropdown, "LEFT", 8, 0)
+    text:SetPoint("RIGHT", dropdown, "RIGHT", -24, 0)
+    text:SetJustifyH("LEFT")
+    text:SetTextColor(unpack(COLOR_LABEL))
+    dropdown.text = text
+    
+    local arrow = dropdown:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    arrow:SetPoint("RIGHT", dropdown, "RIGHT", -6, 0)
+    arrow:SetText("▼")
+    arrow:SetTextColor(0.7, 0.7, 0.7, 1.0)
+    dropdown.arrow = arrow
+    
+    local menuFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    menuFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+    menuFrame:SetFrameLevel(1000)
+    menuFrame:Hide()
+    menuFrame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        tile = false, tileSize = 0, edgeSize = 1,
+        insets = { left = 0, right = 0, top = 0, bottom = 0 }
+    })
+    menuFrame:SetBackdropColor(0.15, 0.15, 0.17, 1.0)
+    menuFrame:SetBackdropBorderColor(unpack(MODERN_BORDER))
+    menuFrame:SetSize(150, 1)
+    menuFrame.items = {}
+    
+    local closeFrame = CreateFrame("Frame", nil, UIParent)
+    closeFrame:SetAllPoints()
+    closeFrame:EnableMouse(false)
+    closeFrame:EnableMouseWheel(false)
+    closeFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+    closeFrame:SetFrameLevel(menuFrame:GetFrameLevel() - 1)
+    closeFrame:SetScript("OnUpdate", nil)
+    closeFrame:Hide()
+    
+    local function EnsureCloseFrameHidden()
+        if closeFrame then
+            closeFrame:Hide()
+            closeFrame:EnableMouse(false)
+            closeFrame:SetScript("OnUpdate", nil)
+        end
+    end
+    
+    local function UpdateText()
+        local currentValue = getFunc()
+        dropdown.text:SetText(options[currentValue] or options[1] or "")
+    end
+    
+    local function CreateMenuItem(value, text, yPos)
+        local item = CreateFrame("Button", nil, menuFrame)
+        item:SetSize(150, 22)
+        item:SetPoint("TOPLEFT", menuFrame, "TOPLEFT", 0, -yPos)
+        
+        local itemBg = item:CreateTexture(nil, "BACKGROUND")
+        itemBg:SetAllPoints()
+        itemBg:SetColorTexture(0.2, 0.2, 0.2, 0)
+        item.bg = itemBg
+        
+        local itemText = item:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        itemText:SetPoint("LEFT", item, "LEFT", 8, 0)
+        itemText:SetText(text)
+        itemText:SetTextColor(unpack(COLOR_LABEL))
+        
+        item:SetScript("OnEnter", function(self)
+            itemBg:SetColorTexture(0.3, 0.3, 0.3, 1.0)
+        end)
+        item:SetScript("OnLeave", function(self)
+            itemBg:SetColorTexture(0.2, 0.2, 0.2, 0)
+        end)
+        item:SetScript("OnClick", function()
+            EnsureCloseFrameHidden()
+            menuFrame:Hide()
+            UpdateText()
+            if setFunc then
+                C_Timer.After(0.1, function()
+                    if setFunc then setFunc(value) end
+                end)
             end
-            info.checked = (getFunc() == value)
-            UIDropDownMenu_AddButton(info, level)
+        end)
+        
+        return item
+    end
+    
+    local function CloseMenuOnClickOutside()
+        if not menuFrame:IsShown() then return end
+        
+        local x, y = GetCursorPosition()
+        local scale = UIParent:GetEffectiveScale()
+        x, y = x / scale, y / scale
+        
+        local mx, my = menuFrame:GetLeft(), menuFrame:GetTop()
+        local mw, mh = menuFrame:GetWidth(), menuFrame:GetHeight()
+        local inMenu = (x >= mx and x <= mx + mw and y <= my and y >= my - mh)
+        
+        local dx, dy = dropdown:GetLeft(), dropdown:GetTop()
+        local dw, dh = dropdown:GetWidth(), dropdown:GetHeight()
+        local inDropdown = (x >= dx and x <= dx + dw and y <= dy and y >= dy - dh)
+        
+        if not inMenu and not inDropdown then
+            EnsureCloseFrameHidden()
+            menuFrame:Hide()
+        end
+    end
+    
+    closeFrame:SetScript("OnMouseDown", function(self, button)
+        if button == "LeftButton" and menuFrame:IsShown() then
+            CloseMenuOnClickOutside()
         end
     end)
-    if tooltip then
-        dropdown:SetScript("OnEnter", function(self)
+    
+    closeFrame:SetScript("OnUpdate", function(self)
+        if not menuFrame:IsShown() then
+            EnsureCloseFrameHidden()
+        end
+    end)
+    
+    dropdown:SetScript("OnClick", function(self)
+        if menuFrame:IsShown() then
+            EnsureCloseFrameHidden()
+            menuFrame:Hide()
+            return
+        end
+        
+        menuFrame:SetHeight(1)
+        for _, item in ipairs(menuFrame.items or {}) do
+            if item then
+                item:Hide()
+                item:SetParent(nil)
+            end
+        end
+        menuFrame.items = {}
+        
+        local yPos = 0
+        local itemCount = 0
+        
+        for value, text in pairs(options) do
+            local item = CreateMenuItem(value, text, yPos)
+            table.insert(menuFrame.items, item)
+            yPos = yPos + 22
+            itemCount = itemCount + 1
+        end
+        
+        menuFrame:SetHeight(itemCount * 22)
+        menuFrame:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -1)
+        menuFrame:Show()
+        closeFrame:Show()
+        closeFrame:EnableMouse(true)
+        closeFrame:SetScript("OnUpdate", function(self)
+            if not menuFrame:IsShown() then
+                EnsureCloseFrameHidden()
+            end
+        end)
+    end)
+    
+    dropdown:SetScript("OnEnter", function(self)
+        bg:SetColorTexture(0.25, 0.25, 0.25, 1.0)
+        border:SetColorTexture(0.5, 0.5, 0.5, 1.0)
+        if tooltip then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText(tooltip, nil, nil, nil, nil, true)
             GameTooltip:Show()
-        end)
-        dropdown:SetScript("OnLeave", GameTooltip.Hide)
+        end
+    end)
+    
+    dropdown:SetScript("OnLeave", function(self)
+        bg:SetColorTexture(0.2, 0.2, 0.2, 1.0)
+        border:SetColorTexture(0.4, 0.4, 0.4, 1.0)
+        GameTooltip:Hide()
+    end)
+    
+    menuFrame:SetScript("OnHide", function()
+        menuFrame:SetHeight(1)
+        for _, item in ipairs(menuFrame.items or {}) do
+            if item then
+                item:Hide()
+                item:SetParent(nil)
+            end
+        end
+        menuFrame.items = {}
+        EnsureCloseFrameHidden()
+    end)
+    
+    local function CloseMenuOnClickOutside()
+        if not menuFrame:IsShown() then return end
+        
+        local x, y = GetCursorPosition()
+        local scale = UIParent:GetEffectiveScale()
+        x, y = x / scale, y / scale
+        
+        local mx, my = menuFrame:GetLeft(), menuFrame:GetTop()
+        local mw, mh = menuFrame:GetWidth(), menuFrame:GetHeight()
+        local inMenu = (x >= mx and x <= mx + mw and y <= my and y >= my - mh)
+        
+        local dx, dy = dropdown:GetLeft(), dropdown:GetTop()
+        local dw, dh = dropdown:GetWidth(), dropdown:GetHeight()
+        local inDropdown = (x >= dx and x <= dx + dw and y <= dy and y >= dy - dh)
+        
+        if not inMenu and not inDropdown then
+            menuFrame:Hide()
+        end
     end
-    dropdown.UpdateState = function()
-        local currentValue = getFunc()
-        UIDropDownMenu_SetSelectedValue(dropdown, currentValue)
-        UIDropDownMenu_SetText(dropdown, options[currentValue] or options[1])
-    end
+    
+    local closeFrame = CreateFrame("Frame", nil, UIParent)
+    closeFrame:SetAllPoints()
+    closeFrame:EnableMouse(true)
+    closeFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+    closeFrame:SetFrameLevel(menuFrame:GetFrameLevel() - 1)
+    closeFrame:Hide()
+    
+    closeFrame:SetScript("OnMouseDown", function(self, button)
+        if button == "LeftButton" then
+            CloseMenuOnClickOutside()
+        end
+    end)
+    
+    dropdown:SetScript("OnClick", function(self)
+        if menuFrame:IsShown() then
+            menuFrame:Hide()
+            closeFrame:Hide()
+            return
+        end
+        
+        local yPos = 0
+        local itemCount = 0
+        menuFrame.items = {}
+        
+        for value, text in pairs(options) do
+            local item = CreateMenuItem(value, text, yPos)
+            table.insert(menuFrame.items, item)
+            yPos = yPos + 22
+            itemCount = itemCount + 1
+        end
+        
+        menuFrame:SetHeight(itemCount * 22)
+        menuFrame:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -1)
+        menuFrame:Show()
+        closeFrame:Show()
+    end)
+    
+    dropdown.UpdateState = UpdateText
+    UpdateText()
+    
     return dropdown
 end
 
@@ -857,13 +1200,13 @@ function OptionsPanel.CreatePanel()
     frame:Hide()
     table.insert(UISpecialFrames, "UIEssentialsOptionsPanel")
     frame:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = false, tileSize = 16, edgeSize = 12,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        tile = false, tileSize = 0, edgeSize = 1,
+        insets = { left = 0, right = 0, top = 0, bottom = 0 }
     })
-    frame:SetBackdropColor(unpack(BEIGE_BG))
-    frame:SetBackdropBorderColor(unpack(BEIGE_BORDER))
+    frame:SetBackdropColor(unpack(MODERN_BG))
+    frame:SetBackdropBorderColor(unpack(MODERN_BORDER))
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() self:SetUserPlaced(false) end)
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -875,11 +1218,21 @@ function OptionsPanel.CreatePanel()
     version:SetText("Version 2.4")
     version:SetTextColor(unpack(COLOR_VERSION))
     local closeBtn = CreateFrame("Button", nil, frame)
-    closeBtn:SetSize(26, 26)
-    closeBtn:SetPoint("TOPRIGHT", -4, -4)
-    closeBtn:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
-    closeBtn:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
-    closeBtn:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
+    closeBtn:SetSize(28, 28)
+    closeBtn:SetPoint("TOPRIGHT", -2, -2)
+    local closeBg = closeBtn:CreateTexture(nil, "BACKGROUND")
+    closeBg:SetAllPoints()
+    closeBg:SetColorTexture(0.2, 0.2, 0.2, 1.0)
+    local closeText = closeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    closeText:SetPoint("CENTER")
+    closeText:SetText("×")
+    closeText:SetTextColor(0.9, 0.9, 0.9, 1.0)
+    closeBtn:SetScript("OnEnter", function(self)
+        closeBg:SetColorTexture(0.4, 0.15, 0.15, 1.0)
+    end)
+    closeBtn:SetScript("OnLeave", function(self)
+        closeBg:SetColorTexture(0.2, 0.2, 0.2, 1.0)
+    end)
     closeBtn:SetScript("OnClick", function() frame:Hide() end)
     local content = CreateFrame("Frame", nil, frame)
     content:SetPoint("TOPLEFT", 12, -45)
@@ -899,13 +1252,13 @@ function OptionsPanel.CreatePanel()
         "Display who is targeting what in unit tooltips", 8, yOffset - 18,
         function() return SettingsManager:Get("enableTooltips") end,
         function(val) SettingsManager:Set("enableTooltips", val) end)
-    yOffset = yOffset - 40
+    yOffset = yOffset - 55
     CreateSectionHeader(leftColumn, "Character Features", 0, yOffset)
     local itemLevelDecimals = CreateCheckbox(leftColumn, "Show item level decimals",
         "Display item level with decimal precision in character frame", 8, yOffset - 18,
         function() return SettingsManager:Get("showItemLevelDecimals") end,
         function(val) SettingsManager:Set("showItemLevelDecimals", val) end)
-    yOffset = yOffset - 40
+    yOffset = yOffset - 55
     CreateSectionHeader(leftColumn, "UI Features", 0, yOffset)
     local cursorHighlight = CreateCheckbox(leftColumn, "Show cursor highlight",
         "Display a visual indicator at your cursor position", 8, yOffset - 18,
@@ -914,13 +1267,54 @@ function OptionsPanel.CreatePanel()
             SettingsManager:Set("showCursorHighlight", val)
             if val then CursorHighlight.StartTracking() else CursorHighlight.StopTracking() end
         end)
-    local cursorStyleDropdown = CreateDropdown(leftColumn, "Cursor style:",
-        "Choose between a green square or Star Surge trail", 8, yOffset - 40,
-        {square = "Green Square", starsurge = "Star Surge"},
-        function() return SettingsManager:Get("cursorStyle") or "square" end,
+    local cursorStyleLabel = leftColumn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    cursorStyleLabel:SetPoint("TOPLEFT", 8, yOffset - 55)
+    cursorStyleLabel:SetText("Cursor style:")
+    cursorStyleLabel:SetTextColor(unpack(COLOR_LABEL))
+    
+    local cursorStyleRadios = {}
+    local function UpdateCursorStyleRadios()
+        local currentValue = SettingsManager:Get("cursorStyle") or "square"
+        for _, radio in ipairs(cursorStyleRadios) do
+            if radio.UpdateState then
+                radio:UpdateState(currentValue)
+            end
+        end
+    end
+    
+    local radio1 = CreateRadioButton(leftColumn, "Green Square",
+        "Display a green square at your cursor", 8, yOffset - 73,
+        "square", SettingsManager:Get("cursorStyle") or "square",
         function(val)
             SettingsManager:Set("cursorStyle", val)
+            UpdateCursorStyleRadios()
             if SettingsManager:Get("showCursorHighlight") then CursorHighlight.StartTracking() end
+        end)
+    table.insert(cursorStyleRadios, radio1)
+    
+    local radio2 = CreateRadioButton(leftColumn, "Star Surge",
+        "Display a Star Surge trail at your cursor", 8, yOffset - 93,
+        "starsurge", SettingsManager:Get("cursorStyle") or "square",
+        function(val)
+            SettingsManager:Set("cursorStyle", val)
+            UpdateCursorStyleRadios()
+            if SettingsManager:Get("showCursorHighlight") then CursorHighlight.StartTracking() end
+        end)
+    table.insert(cursorStyleRadios, radio2)
+    
+    yOffset = yOffset - 115
+    local cooldownColors = CreateCheckbox(leftColumn, "Colorize cooldown timers",
+        "Color cooldown text based on remaining time (green/yellow/red)", 8, yOffset - 18,
+        function() return SettingsManager:Get("enableCooldownColors") end,
+        function(val)
+            SettingsManager:Set("enableCooldownColors", val)
+            if CooldownColor then
+                if val then
+                    CooldownColor.Initialize()
+                else
+                    CooldownColor.Disable()
+                end
+            end
         end)
     yOffset = 0
     CreateSectionHeader(rightColumn, "Realm Name Removal", 0, yOffset)
@@ -932,7 +1326,7 @@ function OptionsPanel.CreatePanel()
         "Remove realm names from party unit frames", 8, yOffset - 40,
         function() return SettingsManager:Get("hideRealmParty") end,
         function(val) SettingsManager:Set("hideRealmParty", val) end)
-    yOffset = yOffset - 62
+    yOffset = yOffset - 77
     CreateSectionHeader(rightColumn, "Cutscene Features", 0, yOffset)
     local autoSkipCutscenes = CreateCheckbox(rightColumn, "Auto skip all cutscenes",
         "Automatically skip all cutscenes and movies, regardless of whether you've seen them", 8, yOffset - 18,
@@ -941,16 +1335,51 @@ function OptionsPanel.CreatePanel()
             SettingsManager:Set("autoSkipCutscenes", val)
             if val then CutsceneSkipper.Enable() else CutsceneSkipper.Disable() end
         end)
-    yOffset = yOffset - 40
+    yOffset = yOffset - 55
     CreateSectionHeader(rightColumn, "Item Comparison", 0, yOffset)
-    local disableAutoCompare = CreateCheckbox(rightColumn, "Disable auto-comparison (Shift to compare)",
-        "Restore old behavior: Hold Shift to compare gear instead of automatic comparison", 8, yOffset - 18,
+    local disableAutoCompare = CreateCheckbox(rightColumn, "Disable auto-comparison",
+        "Hold Shift to compare gear instead of automatic comparison", 8, yOffset - 18,
         function() return SettingsManager:Get("disableAutoCompare") end,
         function(val) SettingsManager:Set("disableAutoCompare", val) AutoCompareDisabler.ApplySetting() end)
-    local reloadBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-    reloadBtn:SetSize(90, 26)
+    local reloadBtn = CreateFrame("Button", nil, frame)
+    reloadBtn:SetSize(120, 36)
     reloadBtn:SetPoint("BOTTOM", frame, "BOTTOM", 0, 12)
-    reloadBtn:SetText("Reload UI")
+    
+    local reloadBg = reloadBtn:CreateTexture(nil, "BACKGROUND")
+    reloadBg:SetAllPoints()
+    reloadBg:SetColorTexture(0.3, 0.18, 0.18, 1.0)
+    reloadBtn.bg = reloadBg
+    
+    local reloadBorder = reloadBtn:CreateTexture(nil, "BORDER")
+    reloadBorder:SetAllPoints()
+    reloadBorder:SetColorTexture(0.5, 0.3, 0.3, 1.0)
+    reloadBtn.border = reloadBorder
+    
+    local reloadText = reloadBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    reloadText:SetPoint("CENTER")
+    reloadText:SetText("Reload UI")
+    reloadText:SetTextColor(0.95, 0.95, 0.95, 1.0)
+    
+    reloadBtn:SetScript("OnEnter", function(self)
+        reloadBg:SetColorTexture(0.4, 0.25, 0.25, 1.0)
+        reloadBorder:SetColorTexture(0.6, 0.4, 0.4, 1.0)
+    end)
+    
+    reloadBtn:SetScript("OnLeave", function(self)
+        reloadBg:SetColorTexture(0.3, 0.18, 0.18, 1.0)
+        reloadBorder:SetColorTexture(0.5, 0.3, 0.3, 1.0)
+    end)
+    
+    reloadBtn:SetScript("OnMouseDown", function(self)
+        reloadBg:SetColorTexture(0.25, 0.15, 0.15, 1.0)
+        reloadBorder:SetColorTexture(0.4, 0.25, 0.25, 1.0)
+    end)
+    
+    reloadBtn:SetScript("OnMouseUp", function(self)
+        reloadBg:SetColorTexture(0.4, 0.25, 0.25, 1.0)
+        reloadBorder:SetColorTexture(0.6, 0.4, 0.4, 1.0)
+    end)
+    
     reloadBtn:SetScript("OnClick", ReloadUI)
     local reloadText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     reloadText:SetPoint("BOTTOM", reloadBtn, "TOP", 0, 4)
@@ -958,13 +1387,18 @@ function OptionsPanel.CreatePanel()
     reloadText:SetTextColor(unpack(COLOR_HINT))
     frame.checkboxes = {
         enableTooltips = enableTooltips, itemLevelDecimals = itemLevelDecimals,
-        cursorHighlight = cursorHighlight, cursorStyle = cursorStyleDropdown,
+        cursorHighlight = cursorHighlight,
+        cooldownColors = cooldownColors,
         hideRealmRaid = hideRealmRaid, hideRealmParty = hideRealmParty,
         autoSkipCutscenes = autoSkipCutscenes, disableAutoCompare = disableAutoCompare
     }
+    frame.UpdateCursorStyleRadios = UpdateCursorStyleRadios
     frame.UpdateCheckboxes = function()
         for _, checkbox in pairs(frame.checkboxes) do
             if checkbox.UpdateState then checkbox:UpdateState() end
+        end
+        if frame.UpdateCursorStyleRadios then
+            frame.UpdateCursorStyleRadios()
         end
     end
     frame:SetScript("OnShow", function(self)
@@ -1006,6 +1440,9 @@ initFrame:SetScript("OnEvent", function(self, event, loadedAddonName)
         AutoCompareDisabler.Initialize()
         CursorHighlight.Initialize()
         CutsceneSkipper.Initialize()
+        if SettingsManager:Get("enableCooldownColors") and CooldownColor then
+            CooldownColor.Initialize()
+        end
         Cache:StartCleanupTimer()
         OptionsPanel.Initialize()
         self:UnregisterEvent("ADDON_LOADED")

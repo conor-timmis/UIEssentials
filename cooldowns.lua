@@ -162,6 +162,8 @@ end
 local function InitCooldown(cooldown, durationObject)
     if not cooldown or cooldown:IsForbidden() then return end
     
+    if UIEssentials and UIEssentials.enableCooldownColors == false then return end
+    
     if not IsActionButtonCooldown(cooldown) then return end
     
     local actionID = GetActionID(cooldown)
@@ -253,6 +255,7 @@ local function HookCooldownMetatable()
     
     hooksecurefunc(cooldown_mt, 'SetCooldown', function(cooldown, start, duration, modRate)
         if cooldown:IsForbidden() then return end
+        if UIEssentials and UIEssentials.enableCooldownColors == false then return end
         
         local cdInfo = CooldownColor.activeCooldowns[cooldown]
         local actionID = cdInfo and cdInfo.actionID or GetActionID(cooldown)
@@ -270,6 +273,7 @@ local function HookCooldownMetatable()
     
     hooksecurefunc(cooldown_mt, 'SetCooldownDuration', function(cooldown, duration, modRate)
         if cooldown:IsForbidden() then return end
+        if UIEssentials and UIEssentials.enableCooldownColors == false then return end
         
         local cdInfo = CooldownColor.activeCooldowns[cooldown]
         local actionID = cdInfo and cdInfo.actionID or GetActionID(cooldown)
@@ -287,11 +291,13 @@ local function HookCooldownMetatable()
     
     hooksecurefunc(cooldown_mt, 'SetCooldownFromDurationObject', function(cooldown, durationObject)
         if cooldown:IsForbidden() then return end
+        if UIEssentials and UIEssentials.enableCooldownColors == false then return end
         InitCooldown(cooldown, durationObject)
     end)
     
     hooksecurefunc(cooldown_mt, 'SetCooldownFromExpirationTime', function(cooldown, expirationTime, duration, modRate)
         if cooldown:IsForbidden() then return end
+        if UIEssentials and UIEssentials.enableCooldownColors == false then return end
         
         local cdInfo = CooldownColor.activeCooldowns[cooldown]
         local actionID = cdInfo and cdInfo.actionID or GetActionID(cooldown)
@@ -318,6 +324,10 @@ end
 local function Initialize()
     if CooldownColor.isInitialized then return end
     
+    if UIEssentials and UIEssentials.enableCooldownColors == false then
+        return
+    end
+    
     local initFrame = CreateFrame("Frame")
     initFrame:RegisterEvent("ADDON_LOADED")
     initFrame:RegisterEvent("PLAYER_LOGIN")
@@ -342,4 +352,14 @@ local function Initialize()
     CooldownColor.isInitialized = true
 end
 
-Initialize()
+function CooldownColor.Disable()
+    StopUpdateTicker()
+    CooldownColor.activeCooldowns = {}
+    CooldownColor.isInitialized = false
+end
+
+CooldownColor.Initialize = Initialize
+
+if not UIEssentials or UIEssentials.enableCooldownColors ~= false then
+    Initialize()
+end
