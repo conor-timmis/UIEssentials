@@ -396,7 +396,8 @@ function TooltipHandler.Initialize()
         local guid = UnitGUID(unit)
         if not guid then return end
         C_Timer.After(0.01, function()
-            if GameTooltip:IsShown() and UnitGUID(unit) == guid then
+
+            if GameTooltip:IsShown() and UnitExists(unit) then
                 pcall(function()
                     TooltipHandler.AddTargetInfo(GameTooltip, {guid = guid, type = Enum.TooltipDataType.Unit})
                 end)
