@@ -7,6 +7,19 @@ CooldownColor.activeCooldowns = {}
 
 local updateTicker = nil
 
+local BUTTON_PATTERNS = {
+    "^ActionButton%d+",
+    "^MultiBarBottomLeftButton%d+",
+    "^MultiBarBottomRightButton%d+",
+    "^MultiBarRightButton%d+",
+    "^MultiBarLeftButton%d+",
+    "^MultiBar5Button%d+",
+    "^MultiBar6Button%d+",
+    "^MultiBar7Button%d+",
+    "^PetActionButton%d+",
+    "^StanceButton%d+"
+}
+
 local function CreateColorCurve()
     local curve = C_CurveUtil.CreateColorCurve()
     curve:SetType(Enum.LuaCurveType.Step)
@@ -28,9 +41,11 @@ local function GetActionID(cooldown)
     return nil
 end
 
-local function GetDuration(cooldown)
-    local actionID = GetActionID(cooldown)
-    if not actionID then return nil end
+local function GetDuration(cooldown, actionID)
+    if not actionID then
+        actionID = GetActionID(cooldown)
+        if not actionID then return nil end
+    end
     
     local key = cooldown:GetParentKey()
     
@@ -44,46 +59,49 @@ local function GetDuration(cooldown)
 end
 
 local function IsActionButtonCooldown(cooldown)
+    if cooldown._isActionButtonCooldown ~= nil then
+        return cooldown._isActionButtonCooldown
+    end
+    
     local parent = cooldown:GetParent()
-    if not parent or not parent.action then return false end
+    if not parent or not parent.action then
+        cooldown._isActionButtonCooldown = false
+        return false
+    end
     
     local parentName = parent:GetName()
-    if not parentName then return false end
+    if not parentName then
+        cooldown._isActionButtonCooldown = false
+        return false
+    end
     
-    local patterns = {
-        "^ActionButton%d+",
-        "^MultiBarBottomLeftButton%d+",
-        "^MultiBarBottomRightButton%d+",
-        "^MultiBarRightButton%d+",
-        "^MultiBarLeftButton%d+",
-        "^MultiBar5Button%d+",
-        "^MultiBar6Button%d+",
-        "^MultiBar7Button%d+",
-        "^PetActionButton%d+",
-        "^StanceButton%d+"
-    }
-    
-    for _, pattern in ipairs(patterns) do
-        if parentName:match(pattern) then
+    for i = 1, #BUTTON_PATTERNS do
+        if parentName:match(BUTTON_PATTERNS[i]) then
+            cooldown._isActionButtonCooldown = true
             return true
         end
     end
     
+    cooldown._isActionButtonCooldown = false
     return false
 end
 
 local function UpdateCooldownColor(cooldownFrame, cdInfo)
-    if not cooldownFrame or cooldownFrame:IsForbidden() or not cooldownFrame:IsShown() then
+    if not cooldownFrame or cooldownFrame:IsForbidden() then
         return
     end
     
-    if not IsActionButtonCooldown(cooldownFrame) then
+    if not cooldownFrame:IsShown() then
         return
     end
     
-    local text = cooldownFrame:GetCountdownFontString()
+    local text = cdInfo.text
     if not text or text:IsForbidden() then
-        return
+        text = cooldownFrame:GetCountdownFontString()
+        if not text or text:IsForbidden() then
+            return
+        end
+        cdInfo.text = text
     end
     
     local r, g, b, a = 1, 1, 1, 1
@@ -107,24 +125,6 @@ local function UpdateCooldownColor(cooldownFrame, cdInfo)
     text:SetTextColor(r, g, b, a)
 end
 
-local function StartUpdateTicker()
-    if updateTicker then return end
-    
-    updateTicker = C_Timer.NewTicker(0.1, function()
-        for cooldown, cdInfo in pairs(CooldownColor.activeCooldowns) do
-            if cooldown and not cooldown:IsForbidden() and cooldown:IsShown() then
-                UpdateCooldownColor(cooldown, cdInfo)
-            else
-                CooldownColor.activeCooldowns[cooldown] = nil
-            end
-        end
-        
-        if not next(CooldownColor.activeCooldowns) then
-            StopUpdateTicker()
-        end
-    end)
-end
-
 local function StopUpdateTicker()
     if updateTicker then
         updateTicker:Cancel()
@@ -132,18 +132,50 @@ local function StopUpdateTicker()
     end
 end
 
+local function StartUpdateTicker()
+    if updateTicker then return end
+    
+    updateTicker = C_Timer.NewTicker(0.1, function()
+        local toRemove = {}
+        local count = 0
+        
+        for cooldown, cdInfo in pairs(CooldownColor.activeCooldowns) do
+            count = count + 1
+            if cooldown and not cooldown:IsForbidden() and cooldown:IsShown() then
+                UpdateCooldownColor(cooldown, cdInfo)
+            else
+                toRemove[cooldown] = true
+            end
+        end
+        
+        for cooldown in pairs(toRemove) do
+            CooldownColor.activeCooldowns[cooldown] = nil
+            count = count - 1
+        end
+        
+        if count == 0 then
+            StopUpdateTicker()
+        end
+    end)
+end
+
 local function InitCooldown(cooldown, durationObject)
     if not cooldown or cooldown:IsForbidden() then return end
     
     if not IsActionButtonCooldown(cooldown) then return end
     
+    local actionID = GetActionID(cooldown)
     if not durationObject then
-        durationObject = GetDuration(cooldown)
+        durationObject = GetDuration(cooldown, actionID)
     end
+    
+    local text = cooldown:GetCountdownFontString()
     
     CooldownColor.activeCooldowns[cooldown] = {
         duration = durationObject,
-        cooldown = cooldown
+        cooldown = cooldown,
+        actionID = actionID,
+        text = text
     }
     
     if not cooldown._cooldownColorHooked then
@@ -153,6 +185,9 @@ local function InitCooldown(cooldown, durationObject)
                 if not cdInfo then
                     InitCooldown(self, GetDuration(self))
                 else
+                    if not cdInfo.text or cdInfo.text:IsForbidden() then
+                        cdInfo.text = self:GetCountdownFontString()
+                    end
                     UpdateCooldownColor(self, cdInfo)
                 end
                 
@@ -191,9 +226,9 @@ local function StopCooldown(cooldown)
 end
 
 local function notSecret(...)
-    for i = 1, select('#', ...) do
-        local value = select(i, ...)
-        if issecretvalue(value) then
+    local count = select('#', ...)
+    for i = 1, count do
+        if issecretvalue(select(i, ...)) then
             return false
         end
     end
@@ -219,12 +254,15 @@ local function HookCooldownMetatable()
     hooksecurefunc(cooldown_mt, 'SetCooldown', function(cooldown, start, duration, modRate)
         if cooldown:IsForbidden() then return end
         
+        local cdInfo = CooldownColor.activeCooldowns[cooldown]
+        local actionID = cdInfo and cdInfo.actionID or GetActionID(cooldown)
+        
         local durationObject
         if notSecret(start, duration, modRate) then
             durationObject = C_DurationUtil.CreateDuration()
             durationObject:SetTimeFromStart(start, duration, modRate)
         else
-            durationObject = GetDuration(cooldown)
+            durationObject = GetDuration(cooldown, actionID)
         end
         
         InitCooldown(cooldown, durationObject)
@@ -233,12 +271,15 @@ local function HookCooldownMetatable()
     hooksecurefunc(cooldown_mt, 'SetCooldownDuration', function(cooldown, duration, modRate)
         if cooldown:IsForbidden() then return end
         
+        local cdInfo = CooldownColor.activeCooldowns[cooldown]
+        local actionID = cdInfo and cdInfo.actionID or GetActionID(cooldown)
+        
         local durationObject
         if notSecret(duration, modRate) then
             durationObject = C_DurationUtil.CreateDuration()
             durationObject:SetTimeFromStart(GetTime(), duration, modRate)
         else
-            durationObject = GetDuration(cooldown)
+            durationObject = GetDuration(cooldown, actionID)
         end
         
         InitCooldown(cooldown, durationObject)
@@ -252,12 +293,15 @@ local function HookCooldownMetatable()
     hooksecurefunc(cooldown_mt, 'SetCooldownFromExpirationTime', function(cooldown, expirationTime, duration, modRate)
         if cooldown:IsForbidden() then return end
         
+        local cdInfo = CooldownColor.activeCooldowns[cooldown]
+        local actionID = cdInfo and cdInfo.actionID or GetActionID(cooldown)
+        
         local durationObject
         if notSecret(expirationTime, duration, modRate) then
             durationObject = C_DurationUtil.CreateDuration()
             durationObject:SetTimeFromEnd(expirationTime, duration, modRate)
         else
-            durationObject = GetDuration(cooldown)
+            durationObject = GetDuration(cooldown, actionID)
         end
         
         InitCooldown(cooldown, durationObject)
