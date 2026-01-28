@@ -20,6 +20,16 @@ local function SetTextColorSafe(fontString, r, g, b, a)
     end
 end
 
+local function GetTextColorSafe(fontString)
+    if fontString and not fontString:IsForbidden() then
+        local success, r, g, b, a = pcall(function() return fontString:GetTextColor() end)
+        if success and r and g and b then
+            return r, g, b, a
+        end
+    end
+    return nil
+end
+
 local function GetTextSafe(fontString)
     local success, text = pcall(function() return fontString:GetText() end)
     return success and text or nil
@@ -105,7 +115,20 @@ local function ApplyCooldownColor(cooldownText, button, force)
     local colorKey = color.r == 0 and "green" or (color.g == 0.85 and "yellow" or "red")
     local lastColor = lastColorCache[cooldownText]
     
-    if force or lastColor ~= colorKey then
+    local needsColor = force or lastColor ~= colorKey
+    
+
+    if not needsColor then
+        local currentR, currentG, currentB = GetTextColorSafe(cooldownText)
+        if currentR and currentG and currentB then
+
+            if math.abs(currentR - 1.0) < 0.1 and math.abs(currentG - 1.0) < 0.1 and math.abs(currentB - 1.0) < 0.1 then
+                needsColor = true
+            end
+        end
+    end
+    
+    if needsColor then
         SetTextColorSafe(cooldownText, color.r, color.g, color.b)
         lastColorCache[cooldownText] = colorKey
     end
@@ -290,11 +313,29 @@ local function HookButtonCooldown(button, forceRecheck)
         hooksecurefunc(cooldownText, "SetText", function(self)
             local button = CooldownColor.cooldownTexts[self]
             if button then 
-
                 lastTextCache[self] = nil
                 ApplyCooldownColor(self, button, true)
             end
         end)
+        
+        hooksecurefunc(cooldownText, "SetTextColor", function(self, r, g, b, a)
+            local button = CooldownColor.cooldownTexts[self]
+            if button and button.cooldown and button.cooldown:IsShown() then
+
+                if r and g and b and math.abs(r - 1.0) < 0.1 and math.abs(g - 1.0) < 0.1 and math.abs(b - 1.0) < 0.1 then
+                    C_Timer.After(0.01, function()
+                        if self and not self:IsForbidden() and button and not button:IsForbidden() then
+                            local currentText = GetTextSafe(self)
+                            if currentText and CleanText(currentText) then
+                                lastTextCache[self] = nil
+                                ApplyCooldownColor(self, button, true)
+                            end
+                        end
+                    end)
+                end
+            end
+        end)
+        
         cooldownText._cooldownColorHooked = true
     end
     
@@ -386,13 +427,19 @@ local function HookActionButtonSystem()
     end
 end
 
+local scannerFrame = nil
+local scannerStarted = false
+local scannerHealthCheck = nil
+
 local function StartButtonScanner()
-    local scanFrame = CreateFrame("Frame")
+    if scannerStarted and scannerFrame and scannerFrame:GetScript("OnUpdate") then return end
+    
+    scannerFrame = CreateFrame("Frame")
     local scanCount, updateCount, cleanupCount, recheckCount = 0, 0, 0, 0
     local sampleCounter = 0
-    
+    scannerStarted = true
 
-    scanFrame:SetScript("OnUpdate", function(self, elapsed)
+    scannerFrame:SetScript("OnUpdate", function(self, elapsed)
         scanCount = scanCount + elapsed
         updateCount = updateCount + elapsed
         cleanupCount = cleanupCount + elapsed
@@ -434,6 +481,7 @@ local function StartButtonScanner()
             
             local count = 0
             local maxEntries = 80
+            local forceReapplyCount = 0
             for cooldownText, button in pairs(CooldownColor.cooldownTexts) do
                 if count >= maxEntries then break end
                 if cooldownText and not cooldownText:IsForbidden() and
@@ -441,7 +489,13 @@ local function StartButtonScanner()
                    button.cooldown and button.cooldown:IsShown() and
                    button.cooldown:GetAlpha() > 0.3 then
                     count = count + 1
-                    ApplyCooldownColor(cooldownText, button, false)
+
+                    if forceReapplyCount % 10 == 0 then
+                        ApplyCooldownColor(cooldownText, button, true)
+                    else
+                        ApplyCooldownColor(cooldownText, button, false)
+                    end
+                    forceReapplyCount = forceReapplyCount + 1
                 elseif cooldownText and not cooldownText:IsForbidden() and
                        button and not button:IsForbidden() then
                 else
@@ -469,35 +523,150 @@ local function StartButtonScanner()
             end
         end
     end)
+    
+    if scannerHealthCheck then
+        scannerHealthCheck:Cancel()
+    end
+    scannerHealthCheck = C_Timer.NewTicker(10.0, function()
+        if not scannerFrame or not scannerFrame:GetScript("OnUpdate") then
+            scannerStarted = false
+            StartButtonScanner()
+        end
+    end)
+    
+
+    local colorReapplyTicker = C_Timer.NewTicker(2.0, function()
+        local reapplied = 0
+        for cooldownText, button in pairs(CooldownColor.cooldownTexts) do
+            if reapplied >= 20 then break end
+            if cooldownText and not cooldownText:IsForbidden() and
+               button and not button:IsForbidden() and
+               button.cooldown and button.cooldown:IsShown() and
+               button.cooldown:GetAlpha() > 0.3 then
+                local text = GetTextSafe(cooldownText)
+                if text and CleanText(text) then
+
+                    lastTextCache[cooldownText] = nil
+                    ApplyCooldownColor(cooldownText, button, true)
+                    reapplied = reapplied + 1
+                end
+            end
+        end
+    end)
+    
+    scannerFrame._colorReapplyTicker = colorReapplyTicker
+end
+
+local initAttempts = 0
+local maxInitAttempts = 20
+local initFrame = nil
+
+local function TryHook()
+    HookActionButtons()
+    HookActionButtonSystem()
+end
+
+local function EnsureScannerStarted()
+    if not scannerStarted then
+        StartButtonScanner()
+    end
+end
+
+local function AttemptInitialization(attemptNumber)
+    initAttempts = initAttempts + 1
+    
+    -- Try to hook buttons
+    local buttonsFound = false
+    for i = 1, 12 do
+        local button = _G["ActionButton" .. i]
+        if button and button.cooldown then
+            buttonsFound = true
+            break
+        end
+    end
+    
+    if buttonsFound or attemptNumber >= 3 then
+        TryHook()
+        EnsureScannerStarted()
+        
+        local verified = false
+        if ActionButton_UpdateCooldown or ActionButton_Update or CooldownFrame_SetTimer then
+            verified = true
+        end
+        
+        if verified or attemptNumber >= 5 then
+
+            return true
+        end
+    end
+    
+    if initAttempts < maxInitAttempts then
+        local delay = math.min(0.5 + (attemptNumber * 0.2), 2.0)
+        C_Timer.After(delay, function()
+            AttemptInitialization(attemptNumber + 1)
+        end)
+    else
+
+        EnsureScannerStarted()
+    end
+    
+    return false
 end
 
 local function Initialize()
     if CooldownColor.isInitialized then return end
     
-    local initFrame = CreateFrame("Frame")
+    initFrame = CreateFrame("Frame")
     initFrame:RegisterEvent("ADDON_LOADED")
     initFrame:RegisterEvent("PLAYER_LOGIN")
     initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    initFrame:RegisterEvent("UPDATE_BINDINGS")
     
-    local function TryHook()
-        HookActionButtons()
-        HookActionButtonSystem()
+    local function OnEvent(self, event, addonName)
+        if event == "ADDON_LOADED" and addonName == "Blizzard_ActionBar" then
+            C_Timer.After(0.3, function()
+                AttemptInitialization(1)
+            end)
+        elseif event == "PLAYER_LOGIN" then
+            C_Timer.After(0.5, function()
+                AttemptInitialization(1)
+            end)
+        elseif event == "PLAYER_ENTERING_WORLD" then
+            C_Timer.After(0.8, function()
+                AttemptInitialization(1)
+            end)
+        elseif event == "UPDATE_BINDINGS" then
+
+            C_Timer.After(0.2, function()
+                if initAttempts < 3 then
+                    AttemptInitialization(1)
+                end
+            end)
+        end
     end
     
-    initFrame:SetScript("OnEvent", function(self, event, addonName)
-        if event == "ADDON_LOADED" and addonName == "Blizzard_ActionBar" then
-            C_Timer.After(0.5, TryHook)
-        elseif event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
-            C_Timer.After(1.0, function()
-                TryHook()
-                StartButtonScanner()
-            end)
+    initFrame:SetScript("OnEvent", OnEvent)
+    
+    C_Timer.After(0.1, function()
+        AttemptInitialization(1)
+    end)
+    
+    C_Timer.After(1.0, function()
+        if not scannerStarted then
+            AttemptInitialization(2)
         end
     end)
     
-    C_Timer.After(2.0, function()
+    C_Timer.After(2.5, function()
+        if not scannerStarted then
+            AttemptInitialization(3)
+        end
+    end)
+    
+    C_Timer.After(5.0, function()
+        
+        EnsureScannerStarted()
         TryHook()
-        StartButtonScanner()
     end)
     
     CooldownColor.isInitialized = true
