@@ -659,7 +659,6 @@ function CursorHighlight.StartTrackingSquare()
     local frame, uiParent, cachedScale, updateThrottle = CursorHighlight.frame, UIParent, CursorHighlight.frame.cachedScale, 0
     frame:Show()
     frame:SetScript("OnUpdate", function(self, elapsed)
-        if InCombatLockdown() then self:Hide() return end
         updateThrottle = updateThrottle + 1
         if updateThrottle < 2 then return end
         updateThrottle = 0
@@ -703,10 +702,6 @@ function CursorHighlight.StartTrackingStarSurge()
     modelFrame:Show()
     modelFrame:SetAlpha(0)
     modelFrame:SetScript("OnUpdate", function(self, elapsed)
-        if InCombatLockdown() then
-            if self:GetAlpha() > 0 then self:SetAlpha(0) isMoving = false end
-            return
-        end
         updateThrottle = updateThrottle + 1
         if updateThrottle < 3 then return end
         updateThrottle = 0
