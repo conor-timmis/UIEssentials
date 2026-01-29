@@ -6,6 +6,7 @@
 ## IconTexture: Interface\TargetingFrame\UI-RaidTargetingIcon_1
 ## SavedVariables: UIEssentials
 
-uiessentials.lua
+main.lua
+ui.lua
 cooldowns.lua
 

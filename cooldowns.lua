@@ -1,7 +1,9 @@
 -- ========================================
 -- COOLDOWN COLOR MODULE
 -- ========================================
-local CooldownColor = {}
+local addonName, addon = ...
+
+local CooldownColor = addon.CooldownColor or {}
 CooldownColor.isInitialized = false
 CooldownColor.activeCooldowns = {}
 
@@ -359,6 +361,8 @@ function CooldownColor.Disable()
 end
 
 CooldownColor.Initialize = Initialize
+
+addon.CooldownColor = CooldownColor
 
 if not UIEssentials or UIEssentials.enableCooldownColors ~= false then
     Initialize()
