@@ -778,9 +778,16 @@ local COLOR_LABEL = {0.9, 0.9, 0.9, 1.0}
 local COLOR_HINT = {0.65, 0.65, 0.65, 1.0}
 
 local function CreateCheckbox(parent, label, tooltip, x, y, getFunc, setFunc)
-    local check = CreateFrame("CheckButton", nil, parent)
+
+    local check = CreateFrame("Button", nil, parent)
     check:SetPoint("TOPLEFT", x, y)
     check:SetSize(20, 20)
+
+    local function hideTex(t) if t then t:SetTexture(nil) t:SetAlpha(0) t:ClearAllPoints() t:SetSize(0.001, 0.001) t:Hide() end end
+    hideTex(check:GetNormalTexture())
+    hideTex(check:GetPushedTexture())
+    hideTex(check:GetHighlightTexture())
+    hideTex(check:GetDisabledTexture())
     
     local bg = check:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
@@ -792,15 +799,18 @@ local function CreateCheckbox(parent, label, tooltip, x, y, getFunc, setFunc)
     border:SetColorTexture(0.4, 0.4, 0.4, 1.0)
     check.border = border
     
-    local checkmark = check:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+
+    local checkmark = check:CreateTexture(nil, "OVERLAY")
     checkmark:SetPoint("CENTER")
-    checkmark:SetText("✓")
-    checkmark:SetTextColor(0.2, 0.8, 0.2, 1.0)
+    checkmark:SetSize(16, 16)
+    checkmark:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    checkmark:SetVertexColor(0.2, 0.8, 0.2, 1.0)
     checkmark:Hide()
     check.checkmark = checkmark
     
     check:SetScript("OnClick", function(self)
-        local checked = self:GetChecked()
+        local checked = not (getFunc and getFunc())
+        if setFunc then setFunc(checked) end
         if checked then
             self.bg:SetColorTexture(0.15, 0.3, 0.15, 1.0)
             self.border:SetColorTexture(0.3, 0.6, 0.3, 1.0)
@@ -810,11 +820,11 @@ local function CreateCheckbox(parent, label, tooltip, x, y, getFunc, setFunc)
             self.border:SetColorTexture(0.4, 0.4, 0.4, 1.0)
             self.checkmark:Hide()
         end
-        if setFunc then setFunc(checked) end
     end)
     
     check:SetScript("OnEnter", function(self)
-        if not self:GetChecked() then
+        local checked = getFunc and getFunc()
+        if not checked then
             self.bg:SetColorTexture(0.25, 0.25, 0.25, 1.0)
             self.border:SetColorTexture(0.5, 0.5, 0.5, 1.0)
         end
@@ -826,7 +836,8 @@ local function CreateCheckbox(parent, label, tooltip, x, y, getFunc, setFunc)
     end)
     
     check:SetScript("OnLeave", function(self)
-        if not self:GetChecked() then
+        local checked = getFunc and getFunc()
+        if not checked then
             self.bg:SetColorTexture(0.2, 0.2, 0.2, 1.0)
             self.border:SetColorTexture(0.4, 0.4, 0.4, 1.0)
         end
@@ -844,7 +855,6 @@ local function CreateCheckbox(parent, label, tooltip, x, y, getFunc, setFunc)
     
     check.UpdateState = function()
         local checked = (getFunc and getFunc()) or false
-        check:SetChecked(checked)
         if checked then
             check.bg:SetColorTexture(0.15, 0.3, 0.15, 1.0)
             check.border:SetColorTexture(0.3, 0.6, 0.3, 1.0)
@@ -863,23 +873,53 @@ local function CreateRadioButton(parent, label, tooltip, x, y, value, currentVal
     local radio = CreateFrame("Button", nil, parent)
     radio:SetPoint("TOPLEFT", x, y)
     
-    local isSelected = (value == currentValue)
-    radio.isSelected = isSelected
+    radio.isSelected = (value == currentValue)
+    local parentWidth = (parent and parent.GetWidth and parent:GetWidth()) or 200
+    radio:SetSize(math.max(120, parentWidth - x - 8), 20)
+    
+    local rowBg = radio:CreateTexture(nil, "BACKGROUND")
+    rowBg:SetAllPoints()
+    rowBg:SetColorTexture(0, 0, 0, 0)
+    
+    local indicatorBg = radio:CreateTexture(nil, "BORDER")
+    indicatorBg:SetPoint("LEFT", 0, 0)
+    indicatorBg:SetSize(16, 16)
+    
+    local indicatorBorder = radio:CreateTexture(nil, "ARTWORK")
+    indicatorBorder:SetAllPoints(indicatorBg)
+    
+    local indicatorMark = radio:CreateTexture(nil, "OVERLAY")
+    indicatorMark:SetPoint("CENTER", indicatorBg, "CENTER")
+    indicatorMark:SetSize(14, 14)
+    indicatorMark:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    indicatorMark:SetVertexColor(0.2, 0.8, 0.2, 1.0)
+    indicatorMark:Hide()
     
     local labelText = radio:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    labelText:SetPoint("LEFT", radio, "LEFT", 0, 0)
+    labelText:SetPoint("LEFT", indicatorBg, "RIGHT", 8, 0)
+    labelText:SetPoint("RIGHT", -6, 0)
+    labelText:SetJustifyH("LEFT")
     labelText:SetText(label)
     radio.labelText = labelText
     
-    local textWidth = labelText:GetStringWidth()
-    radio:SetSize(textWidth + 10, 18)
-    
-    local function UpdateVisualState()
-        if radio.isSelected then
+    local function ApplySelected(selected)
+        if selected then
+            rowBg:SetColorTexture(0.12, 0.22, 0.12, 0.35)
+            indicatorBg:SetColorTexture(0.15, 0.3, 0.15, 1.0)
+            indicatorBorder:SetColorTexture(0.3, 0.6, 0.3, 1.0)
+            indicatorMark:Show()
             labelText:SetTextColor(0.3, 0.9, 0.3, 1.0)
         else
+            rowBg:SetColorTexture(0, 0, 0, 0)
+            indicatorBg:SetColorTexture(0.2, 0.2, 0.2, 1.0)
+            indicatorBorder:SetColorTexture(0.4, 0.4, 0.4, 1.0)
+            indicatorMark:Hide()
             labelText:SetTextColor(unpack(COLOR_LABEL))
         end
+    end
+    
+    local function UpdateVisualState()
+        ApplySelected(radio.isSelected)
     end
     
     radio:SetScript("OnClick", function(self)
@@ -888,7 +928,10 @@ local function CreateRadioButton(parent, label, tooltip, x, y, value, currentVal
     
     radio:SetScript("OnEnter", function(self)
         if not radio.isSelected then
-            labelText:SetTextColor(0.7, 0.7, 0.7, 1.0)
+            rowBg:SetColorTexture(1, 1, 1, 0.04)
+            indicatorBg:SetColorTexture(0.25, 0.25, 0.25, 1.0)
+            indicatorBorder:SetColorTexture(0.5, 0.5, 0.5, 1.0)
+            labelText:SetTextColor(0.85, 0.85, 0.85, 1.0)
         end
         if tooltip then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -903,9 +946,9 @@ local function CreateRadioButton(parent, label, tooltip, x, y, value, currentVal
     end)
     
     UpdateVisualState()
-    
-    radio.UpdateState = function(newCurrentValue)
-        radio.isSelected = (value == newCurrentValue)
+
+    radio.UpdateState = function(self, newCurrentValue)
+        self.isSelected = (value == newCurrentValue)
         UpdateVisualState()
     end
     
@@ -1283,7 +1326,7 @@ function OptionsPanel.CreatePanel()
     end
     
     local radio1 = CreateRadioButton(leftColumn, "Green Square",
-        "Display a green square at your cursor", 8, yOffset - 73,
+        "Display a green square at your cursor", 24, yOffset - 73,
         "square", SettingsManager:Get("cursorStyle") or "square",
         function(val)
             SettingsManager:Set("cursorStyle", val)
@@ -1293,7 +1336,7 @@ function OptionsPanel.CreatePanel()
     table.insert(cursorStyleRadios, radio1)
     
     local radio2 = CreateRadioButton(leftColumn, "Star Surge",
-        "Display a Star Surge trail at your cursor", 8, yOffset - 93,
+        "Display a Star Surge trail at your cursor", 24, yOffset - 93,
         "starsurge", SettingsManager:Get("cursorStyle") or "square",
         function(val)
             SettingsManager:Set("cursorStyle", val)
