@@ -292,9 +292,11 @@ function TargetingScanner.GetUnitsTargeting(targetUnit)
         TargetingScanner.ScanUnits("raid", max, targetUnit, targeters, true)
     end
     if not IsInRaid() then
-        local numNameplates = C_NamePlate and C_NamePlate.GetNumNamePlates() or 0
-        if numNameplates > 0 then
-            TargetingScanner.ScanUnits("nameplate", math.min(numNameplates, CONSTANTS.MAX_NAMEPLATES), targetUnit, targeters, true)
+        for i = 1, CONSTANTS.MAX_NAMEPLATES do
+            local unit = "nameplate" .. i
+            if UnitExists(unit) and TargetingScanner.IsUnitTargeting(unit, targetUnit) then
+                TargetingScanner.AddTargeter(unit, targeters, true)
+            end
         end
     end
     return targeters
